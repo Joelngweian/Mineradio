@@ -235,14 +235,17 @@ body.home-wallpaper-preview #canvas-container{filter:none}
 .home-hero::before{content:'';position:absolute;inset:0;background:linear-gradient(118deg,rgba(255,255,255,.060),transparent 24%,rgba(255,83,103,.070) 54%,rgba(122,215,194,.055) 82%,transparent 100%),linear-gradient(90deg,rgba(255,255,255,.032) 0 1px,transparent 1px 48px),linear-gradient(0deg,rgba(255,255,255,.024) 0 1px,transparent 1px 44px);opacity:.72;pointer-events:none}
 .home-hero::after{content:'';position:absolute;left:28px;right:28px;bottom:22px;height:1px;background:linear-gradient(90deg,color-mix(in srgb,var(--home-accent) 0%,transparent),color-mix(in srgb,var(--home-accent) 52%,transparent),rgba(36,66,255,.24),rgba(248,244,238,.18),color-mix(in srgb,var(--home-accent) 0%,transparent));opacity:.82;pointer-events:none}
 .home-hero-inner{position:relative;z-index:2;height:100%;display:grid;grid-template-columns:minmax(0,1.16fr) minmax(150px,.64fr);grid-template-rows:auto auto auto auto minmax(150px,1fr);column-gap:18px}
+.home-hero-inner.home-construction-inner{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:18px;padding:4px 2px;min-height:100%}
 .home-kicker{grid-column:1;font-size:10px;font-weight:780;letter-spacing:.18em;color:color-mix(in srgb,var(--home-accent) 62%,rgba(255,255,255,.36));text-transform:uppercase;margin-bottom:14px}
 .home-title{grid-column:1;font-size:clamp(34px,4.6vw,58px);line-height:.98;font-weight:760;letter-spacing:0;color:rgba(255,255,255,.98);max-width:380px;text-shadow:0 10px 36px rgba(0,0,0,.26)}
+.home-title.home-construction-title{max-width:620px;font-size:clamp(32px,4.5vw,64px);line-height:1.08}
 .home-sub{grid-column:1;margin-top:14px;font-size:13px;line-height:1.62;color:rgba(255,255,255,.62);max-width:348px}
 .home-weather-meta{grid-column:1;display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
 .home-weather-pill{height:28px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.050);display:inline-flex;align-items:center;color:rgba(255,255,255,.70);font-size:11px;font-weight:680}
 .home-quick-row{grid-column:1;position:relative;z-index:3;display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
 .home-chip{height:32px;padding:0 13px;border-radius:999px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.060);color:rgba(255,255,255,.76);font-family:inherit;font-size:11.5px;font-weight:680;cursor:pointer;transition:background .18s,border-color .18s,color .18s,transform .18s,box-shadow .18s}
 .home-chip:hover{background:color-mix(in srgb,var(--home-accent) 10%,transparent);border-color:color-mix(in srgb,var(--home-accent) 38%,rgba(255,255,255,.10));color:#fff;box-shadow:0 10px 26px color-mix(in srgb,var(--home-accent) 8%,transparent);transform:translateY(-1px)}
+.home-console-chip{height:36px;border-color:color-mix(in srgb,var(--home-accent) 34%,rgba(255,255,255,.12));background:color-mix(in srgb,var(--home-accent) 12%,rgba(255,255,255,.055));color:#fff}
 .home-visual{grid-column:2;grid-row:2 / span 2;position:relative;align-self:center;justify-self:end;width:100%;max-width:300px;height:74px;margin-top:0;pointer-events:none;filter:drop-shadow(0 18px 34px rgba(0,0,0,.28))}
 .home-visual.generated .home-sleeve,.home-visual.generated .home-disc{display:none}
 .home-radio-img{display:none}
@@ -1060,8 +1063,22 @@ body.desktop-shell.diy-mode #bottom-bar.stage-mode{left:50%;width:min(1080px,cal
 .preset-card[data-preset="6"] .pc-desc{font-family:"黑体","SimHei","Microsoft YaHei","Noto Sans SC",Arial,sans-serif;font-weight:800;letter-spacing:.4px}
 .preset-card[data-preset="6"] .pc-name{font-size:14px}
 .preset-card[data-preset="6"] .pc-desc{font-size:10.5px;color:rgba(255,255,255,.52);font-weight:700}
+.preset-card[data-preset="6"] .pc-yui7w{color:#3257f7;font-family:"Microsoft Yi Baiti","SimHei","Microsoft YaHei",sans-serif;font-weight:900;font-style:italic;letter-spacing:.7px}
+.preset-card[data-preset="6"] .pc-icon{color:#3257f7}
+.preset-card[data-preset="6"].active .pc-icon{color:#3257f7!important;text-shadow:0 0 12px rgba(50,87,247,.44)}
 .preset-card .pc-bg{position:absolute;inset:0;opacity:.35;pointer-events:none}
 @keyframes preset-card-pulse{0%{opacity:0;transform:scale(.6) rotate(0deg)}35%{opacity:1}100%{opacity:0;transform:scale(1.25) rotate(12deg)}}
+.user-archive-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:0 0 12px}
+.user-archive-slot{min-height:86px;border-radius:12px;border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.028);padding:10px;display:flex;flex-direction:column;gap:9px;overflow:hidden}
+.user-archive-slot.has-save{border-color:rgba(var(--fc-accent-rgb),.24);background:rgba(var(--fc-accent-rgb),.040)}
+.user-archive-name{font-size:12px;font-weight:760;color:rgba(255,255,255,.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-archive-input{width:100%;height:27px;border-radius:8px;border:1px solid rgba(var(--fc-accent-rgb),.28);background:rgba(0,0,0,.22);color:#fff;font-family:inherit;font-size:12px;font-weight:760;line-height:1;padding:0 8px;outline:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 0 1px rgba(var(--fc-accent-rgb),.06)}
+.user-archive-input:focus{border-color:rgba(var(--fc-accent-rgb),.52);box-shadow:0 0 0 1px rgba(var(--fc-accent-rgb),.16),0 10px 24px rgba(0,0,0,.18)}
+.user-archive-meta{font-size:10px;color:rgba(255,255,255,.42);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-archive-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:auto}
+.user-archive-actions button{height:25px;min-width:0;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.045);color:rgba(255,255,255,.70);font-family:inherit;font-size:10px;font-weight:700;line-height:1;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
+.user-archive-actions button:hover{background:rgba(var(--fc-accent-rgb),.10);border-color:rgba(var(--fc-accent-rgb),.24);color:#fff}
+.user-archive-actions button:disabled{opacity:.34;cursor:default;background:rgba(255,255,255,.025);border-color:rgba(255,255,255,.05);color:rgba(255,255,255,.42)}
 
 /* --- 主滑块 --- */
 .fx-slider{display:grid;grid-template-columns:minmax(78px,92px) minmax(0,1fr) 44px 28px;align-items:center;gap:10px;min-height:44px;margin:8px 0;padding:9px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.030)}
@@ -1823,28 +1840,9 @@ html.control-glass-svg-ok .search-history-chip:hover{
 <section id="empty-home" aria-label="Mineradio home">
   <div class="empty-home-shell">
     <div class="home-hero">
-      <div class="home-hero-inner">
-        <div class="home-kicker" id="home-weather-kicker">Mineradio · Your Library</div>
-        <div class="home-title" id="home-weather-title">我的音乐库</div>
-        <div class="home-sub" id="home-subtitle">从你的歌单、最近播放和常听歌手开始，天气电台放在需要氛围的时候再开。</div>
-        <div class="home-weather-meta" id="home-weather-meta">
-          <span class="home-weather-pill">上海</span>
-          <span class="home-weather-pill">正在整理天气</span>
-        </div>
-        <div class="home-quick-row">
-          <button class="home-chip" type="button" onclick="openHomeLibrary()">我的歌单</button>
-          <button class="home-chip" type="button" onclick="openHomeInsight()">常听歌手</button>
-          <button class="home-chip" type="button" onclick="playHomeRecent()">继续听</button>
-          <button class="home-chip" type="button" data-home-radio-start="1" onclick="startWeatherRadio()">天气电台</button>
-        </div>
-        <div class="home-visual generated" aria-hidden="true">
-          <div class="home-wave-track" id="home-wave-track"></div>
-        </div>
-        <div class="home-mosaic" id="home-mosaic" aria-hidden="true">
-          <div class="home-mosaic-cell"></div>
-          <div class="home-mosaic-cell"></div>
-          <div class="home-mosaic-cell"></div>
-        </div>
+      <div class="home-hero-inner home-construction-inner">
+        <div class="home-title home-construction-title">🚧此处施工，敬请期待🚧</div>
+        <button class="home-chip home-console-chip" type="button" onclick="openHomePlayerConsole()">展开播放器控制台</button>
       </div>
     </div>
 
@@ -1921,6 +1919,8 @@ html.control-glass-svg-ok .search-history-chip:hover{
 
   <div class="fx-section-label">视觉预设</div>
   <div class="preset-grid" id="preset-grid"></div>
+  <div class="fx-section-label">用户存档</div>
+  <div class="user-archive-grid" id="user-archive-grid"></div>
   <div class="fx-section-label">自定义颜色</div>
   <div class="lyric-color-row">
     <input id="ui-accent-picker" class="lyric-color-picker" type="color" value="#00f5d4" title="界面高亮色">
@@ -2556,6 +2556,7 @@ var qqManualCookieOpen = false;
 var loginStatusChecked = false, loginStatusCheckFailed = false;
 var qrPollTimer = null, qrKey = null;
 var volumeTween = null, trackSwitchToken = 0;
+var audioFadeTimer = null, audioElementFadeFrame = 0, audioFadeSerial = 0;
 var userPlaylists = [], qqPlaylists = [], myPodcastCollections = [], myPodcastItems = {}, playlistCoverCache = {};
 var CUSTOM_COVER_STORE_KEY = 'mineradio-custom-covers';
 var CUSTOM_LYRIC_STORE_KEY = 'mineradio-custom-lyrics-v1';
@@ -2574,7 +2575,6 @@ var VISUAL_GUIDE_SEEN_STORE_KEY = 'mineradio-visual-guide-seen-v2';
 var LOCAL_BEATMAP_STORE_KEY = 'mineradio-local-beatmaps-v1';
 var LOCAL_BEAT_PREF_STORE_KEY = 'mineradio-local-beatmap-prefs-v1';
 var LOCAL_BEAT_COMBOS = ['', 'downbeat', 'push', 'drop', 'rebound', 'accent'];
-var BEATMAP_ALGO_VERSION = 2;
 var diyPlayerMode = readDiyModePreference();
 var customCoverMap = readCustomCoverMap();
 var customLyricMap = readCustomLyricMap();
@@ -2682,9 +2682,9 @@ var updatePreviewState = {
   patchFallbackTried: false,
   hero: '当前版本，更新检测已就绪。',
   notes: [
-    '电影镜头节奏更松',
-    '音源失败自动换源',
-    '右上角更新提示'
+    'QQ 音乐播放授权修复',
+    '用户存档与 Home 控制台',
+    '播放/暂停淡入淡出'
   ]
 };
 function readSavedVolume() {
@@ -3794,30 +3794,11 @@ function cameraDynamicsScale(extra) {
   return clampRange((cinemaDynamics.scale || 0.82) * (cinemaTrackProfile.scale || 1) * (extra == null ? 1 : extra) * djBoost, isDj ? 0.24 : 0.18, isDj ? 1.42 : 1.18);
 }
 
-function beatMapRhythmStep(map, beat) {
-  if (beat && typeof beat !== 'number' && beat.step) return beat.step;
-  var profile = map && map.rhythmProfile;
-  if (profile && profile.step) return profile.step;
-  return map && map.gridStep ? map.gridStep : 0;
-}
-
-function isFastRhythmMap(map, beat) {
-  var profile = map && map.rhythmProfile;
-  var step = beatMapRhythmStep(map, beat);
-  return !!(beat && typeof beat !== 'number' && beat.fast) || !!(profile && profile.fastTempo) || !!(step && step >= 0.28 && step < 0.46);
-}
-
-function isHardRhythmMap(map) {
-  var profile = map && map.rhythmProfile;
-  return !!(profile && profile.hardRhythm);
-}
-
 function cinemaTrackNameHint(song) {
   var label = ((song && song.name) || '') + ' ' + ((song && song.artist) || '');
   label = label.toLowerCase().replace(/\s+/g, '');
   if (/after17/.test(label)) return 0.46;
   if (/joey/.test(label)) return 1.08;
-  if (/oneokrock|48hrs|48hours|disciples/.test(label)) return 1.08;
   return 1.0;
 }
 
@@ -3825,7 +3806,6 @@ function cinemaAnalysisProfileForSong(song) {
   var title = String((song && (song.name || song.title)) || '').toLowerCase().replace(/\s+/g, '');
   var artist = String((song && song.artist) || '').toLowerCase().replace(/\s+/g, '');
   var label = title + ' ' + artist;
-  var hardRhythmHint = /oneokrock|48hrs|48hours|disciples/.test(label);
   if (/日落大道|sunsetboulevard/.test(label)) {
     return {
       id: 'sunset-boulevard-soft-groove',
@@ -3833,21 +3813,10 @@ function cinemaAnalysisProfileForSong(song) {
       phaseScan: true,
       localRefine: true,
       sparseCamera: true,
-      introPattern: true,
-      transientRefine: false,
-      hardRhythm: false
+      introPattern: true
     };
   }
-  return {
-    id: hardRhythmHint ? 'hard-rhythm-hint' : 'default',
-    softGroove: false,
-    phaseScan: false,
-    localRefine: false,
-    sparseCamera: false,
-    introPattern: false,
-    transientRefine: true,
-    hardRhythm: hardRhythmHint
-  };
+  return { id: 'default', softGroove: false, phaseScan: false, localRefine: false, sparseCamera: false, introPattern: false };
 }
 
 function resetCinemaTrackProfile(song) {
@@ -3907,8 +3876,6 @@ function applyCinemaProfileFromBeatMap(map) {
   var density = events.length / Math.max(20, map.duration);
   cinemaTrackProfile.density = density;
   var target = 0.44 + clamp01((avgImpact - 0.20) / 0.55) * 0.38 + clamp01((avgLow - 0.24) / 0.48) * 0.18 + clamp01((density - 0.45) / 1.65) * 0.20 + clamp01(primary / Math.max(1, events.length)) * 0.08;
-  if (map.rhythmProfile && map.rhythmProfile.fastTempo) target += 0.055;
-  if (map.rhythmProfile && map.rhythmProfile.hardRhythm) target += 0.045;
   target *= cinemaTrackProfile.nameHint || 1;
   target = clampRange(target, 0.28, 1.12);
   cinemaTrackProfile.target = target;
@@ -4070,10 +4037,6 @@ function processRealtimeBeatEngine(dt) {
   if (!beatAnalyser || !audioCtx || !audio || audio.paused) return null;
   dt = Math.max(0.001, Math.min(0.080, dt || 0.016));
   var dj = djMode.active;
-  var fastMapRealtime = !dj && currentBeatMap && isFastRhythmMap(currentBeatMap);
-  var rtMinTempoGap = dj ? 0.32 : (fastMapRealtime ? 0.30 : 0.42);
-  var rtMaxTempoGap = dj ? 0.96 : (fastMapRealtime ? 0.82 : 0.88);
-  var rtNoLockMinGap = dj ? 0.340 : (fastMapRealtime ? 0.305 : beatCam.realtimeMinInterval);
   beatAnalyser.getByteFrequencyData(beatFrequencyData);
   beatAnalyser.getByteTimeDomainData(beatTimeDomainData);
   var sr = audioCtx.sampleRate || 44100;
@@ -4162,7 +4125,7 @@ function processRealtimeBeatEngine(dt) {
   var tempoAssist = tempoDue && rtBeat.tempoConfidence > (dj ? 0.40 : 0.42) && drumGate && lowPresence > (dj ? 0.48 : 0) && score > (dj ? 0.30 : 0.22) && lowAttack > Math.max(0.016, rtBeat.onsetAvg * (dj ? 0.44 : 0.34));
   var candidateHit = strongTransient || kickTransient || tempoAssist;
   if (warmingUp) candidateHit = false;
-  var hasTempoLock = expectedGap >= rtMinTempoGap && expectedGap <= (dj ? 0.92 : rtMaxTempoGap) && rtBeat.tempoConfidence > (dj ? 0.36 : 0.38);
+  var hasTempoLock = expectedGap >= (dj ? 0.32 : 0.42) && expectedGap <= (dj ? 0.92 : 0.88) && rtBeat.tempoConfidence > (dj ? 0.36 : 0.38);
   var lockedWindow = hasTempoLock ? Math.max(dj ? 0.062 : 0.070, Math.min(dj ? 0.118 : 0.110, expectedGap * (dj ? 0.17 : 0.16))) : 0;
   var gapRaw = nowT - rtBeat.lastHitAt;
   var rhythmAccept = false;
@@ -4179,12 +4142,12 @@ function processRealtimeBeatEngine(dt) {
         rhythmAccept = rhythmAccept || (gapRaw > expectedGap * 1.24 && strongTransient && score > 0.56 && lowDominance > 0.92);
       }
     } else {
-      rhythmAccept = gapRaw >= rtNoLockMinGap && strongTransient && score > (dj ? 0.56 : 0.58) && lowPresence > (dj ? 0.50 : 0.44);
+      rhythmAccept = gapRaw >= (dj ? 0.340 : beatCam.realtimeMinInterval) && strongTransient && score > (dj ? 0.56 : 0.58) && lowPresence > (dj ? 0.50 : 0.44);
     }
   }
   var hit = candidateHit && rhythmAccept;
   if (!hit && (candidateHit || score > 0.42 || vocalNorm > 0.62 || bodyNorm > 0.54)) rtBeat.stats.rejected++;
-  var minGap = hasTempoLock ? Math.max(dj ? 0.315 : (fastMapRealtime ? 0.285 : 0.400), Math.min(dj ? 0.500 : (fastMapRealtime ? 0.420 : 0.540), expectedGap * (dj ? 0.64 : (fastMapRealtime ? 0.62 : 0.72)))) : rtNoLockMinGap;
+  var minGap = hasTempoLock ? Math.max(dj ? 0.315 : 0.400, Math.min(dj ? 0.500 : 0.540, expectedGap * (dj ? 0.64 : 0.72))) : (dj ? 0.340 : beatCam.realtimeMinInterval);
   if (hit && gapRaw < minGap) {
     rtBeat.stats.blocked++;
     hit = false;
@@ -4211,9 +4174,9 @@ function processRealtimeBeatEngine(dt) {
   var gapShift = 0;
   if (rtBeat.lastHitAt > 0) {
     var gap = nowT - rtBeat.lastHitAt;
-    while (gap > rtMaxTempoGap) gap *= 0.5;
-    while (gap < rtMinTempoGap) gap *= 2.0;
-    if (gap >= rtMinTempoGap && gap <= rtMaxTempoGap) {
+    while (gap > (dj ? 0.96 : 0.88)) gap *= 0.5;
+    while (gap < (dj ? 0.32 : 0.42)) gap *= 2.0;
+    if (gap >= (dj ? 0.32 : 0.42) && gap <= (dj ? 0.96 : 0.88)) {
       gapShift = rtBeat.tempoGap ? Math.abs(gap - rtBeat.tempoGap) / Math.max(0.001, rtBeat.tempoGap) : 0;
       var tempoEase = hasTempoLock ? (dj ? 0.12 : 0.10) : (dj ? 0.24 : 0.22);
       if (dj && gapShift > 0.16 && strongTransient && lowDominance > 0.95) tempoEase = Math.min(0.36, tempoEase + gapShift * 0.45);
@@ -4511,11 +4474,6 @@ function scheduleBeatCamera(beat, source) {
   amp = Math.max(dj ? (isDjMapSource ? 0.018 : 0.040) : 0.08, Math.min(dj ? (isDjMapSource ? 0.92 : 0.34) : 0.68, amp));
   if (isLiveSource) {
     var liveMinInterval = dj ? Math.max(0.315, Math.min(0.500, rtBeat.tempoGap ? rtBeat.tempoGap * 0.62 : 0.360)) : beatCam.realtimeMinInterval;
-    if (!dj && currentBeatMap) {
-      var liveMapStep = beatMapRhythmStep(currentBeatMap, beat);
-      if (isFastRhythmMap(currentBeatMap, beat)) liveMinInterval = Math.min(liveMinInterval, Math.max(0.285, Math.min(0.420, (liveMapStep || 0.42) * 0.88)));
-      else if (isHardRhythmMap(currentBeatMap)) liveMinInterval = Math.min(liveMinInterval, 0.405);
-    }
     if (time - beatCam.lastRealtimeAt < liveMinInterval && strength < (dj ? 0.74 : 0.78)) {
       beatCam.stats.liveBlocked++;
       return;
@@ -4545,16 +4503,6 @@ function scheduleBeatCamera(beat, source) {
     var gap = time - beatCam.lastTriggerAt;
     var minGap = beatCam.minInterval;
     if (isMapSource && isPrimary) minGap *= 0.82;
-    if (isMapSource && currentBeatMap) {
-      var mapStep = beatMapRhythmStep(currentBeatMap, beat);
-      if (isFastRhythmMap(currentBeatMap, beat) && isPrimary) {
-        var fastMinGap = Math.max(0.265, Math.min(0.380, (mapStep || 0.42) * 0.86));
-        if (combo === 'push' || combo === 'rebound') fastMinGap = Math.max(fastMinGap, visualImpact >= 0.46 ? 0.285 : 0.335);
-        minGap = Math.min(minGap, fastMinGap);
-      } else if (isHardRhythmMap(currentBeatMap) && isPrimary && visualImpact >= 0.24) {
-        minGap = Math.min(minGap, 0.390);
-      }
-    }
     if (gap < minGap && strength < 0.88) return;
     beatCam.lastTriggerAt = time;
     beatCam.stats.map++;
@@ -9351,9 +9299,7 @@ function normalizeMusicTempoBeats(times, duration) {
     .sort(function(a,b){ return a - b; });
   if (sorted.length < 4) return sorted;
   var gap = medianGap(sorted, 0.20, 1.20);
-  var minMainGap = 0.36;
-  if (gap && gap < 0.34) minMainGap = Math.min(0.34, Math.max(0.285, gap * 1.12));
-  else if (gap && gap < 0.42) minMainGap = Math.min(0.40, Math.max(0.32, gap * 1.32));
+  var minMainGap = gap && gap < 0.42 ? Math.min(0.44, gap * 1.65) : 0.36;
   var out = [];
   var last = -10;
   for (var i = 0; i < sorted.length; i++) {
@@ -9451,7 +9397,7 @@ function getMusicTempoWorkerUrl() {
     'var C=self.MusicTempo||(typeof MusicTempo!=="undefined"?MusicTempo:null);',
     'if(!C)throw new Error("MusicTempo unavailable");',
     'var mono=new Float32Array(d.mono);',
-    'var mt=new C(mono,{bufferSize:2048,hopSize:Math.max(128,Math.round(d.sampleRate*0.010)),timeStep:0.010,minBeatInterval:0.30,maxBeatInterval:0.98,expiryTime:8});',
+    'var mt=new C(mono,{bufferSize:2048,hopSize:Math.max(128,Math.round(d.sampleRate*0.010)),timeStep:0.010,minBeatInterval:0.36,maxBeatInterval:0.95,expiryTime:8});',
     'self.postMessage({ok:true,tempo:mt.tempo||0,beats:mt.beats||[]});',
     '}catch(err){self.postMessage({ok:false,error:(err&&err.message)||String(err)});}',
     '};'
@@ -9623,10 +9569,6 @@ async function readBeatDiskCache(key) {
     if (!r || !r.hit || !r.map) return null;
     var map = unpackLocalBeatMap(r.map);
     if (!map) return null;
-    if (!isBeatMapAlgorithmCurrent(map)) {
-      console.log('节拍D盘缓存算法较旧，重新分析:', key);
-      return null;
-    }
     beatMapCache[key] = map;
     return map;
   } catch (e) {
@@ -9942,61 +9884,6 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
         }
       }
       return { frame: bestFrame, time: bestFrame * 0.010, score: bestScore, base: base };
-    }
-
-    function tempoTransientFrameScore(frame) {
-      var tf = Math.max(0, Math.min(nFrames - 1, Math.round(frame)));
-      var lowTone = Math.min(2.2, bandAt(energy, tf) / lowRef);
-      var bodyTone = Math.min(2.2, bandAt(bodyEnergy, tf) / bodyRef);
-      var vocalTone = Math.min(2.2, bandAt(vocalEnergy, tf) / vocalRef);
-      var snapTone = Math.min(2.2, bandAt(snapEnergy, tf) / snapRef);
-      var lowRise = Math.min(2.8, (onset[tf] || 0) / lowOnsetRef);
-      var bodyRise = Math.min(2.8, (bodyOnset[tf] || 0) / bodyOnsetRef);
-      var vocalRise = Math.min(2.8, (vocalOnset[tf] || 0) / vocalOnsetRef);
-      var snapRise = Math.min(2.8, (snapOnset[tf] || 0) / snapOnsetRef);
-      var lowDominance = lowTone / Math.max(0.001, vocalTone * 0.84 + bodyTone * 0.36 + snapTone * 0.10);
-      var drumRise = lowRise * 0.58 + bodyRise * 0.30 + snapRise * 0.10;
-      var drumTone = lowTone * 0.15 + bodyTone * 0.08 + snapTone * 0.04 + Math.min(1.8, lowDominance) * 0.055;
-      var vocalLeak = Math.max(0, vocalRise * 0.82 + vocalTone * 0.22 - lowRise * 0.58 - bodyRise * 0.32 - 0.12);
-      return Math.max(0, drumRise + drumTone - vocalLeak * 0.22);
-    }
-
-    function bestTempoTransientFrameNear(time, radiusSec) {
-      var center = Math.max(0, Math.min(nFrames - 1, Math.round(time / 0.010)));
-      var radius = Math.max(1, Math.round(Math.max(0.012, radiusSec || 0.050) / 0.010));
-      var base = tempoTransientFrameScore(center);
-      var bestFrame = center;
-      var bestScore = base;
-      for (var tf = Math.max(0, center - radius); tf <= Math.min(nFrames - 1, center + radius); tf++) {
-        var dist = Math.abs(tf - center) / Math.max(1, radius);
-        var score = tempoTransientFrameScore(tf) * (1 - dist * 0.18);
-        if (score > bestScore) {
-          bestScore = score;
-          bestFrame = tf;
-        }
-      }
-      return { frame: bestFrame, time: bestFrame * 0.010, score: bestScore, base: base };
-    }
-
-    function refineTempoBeatTime(time, step) {
-      if (softGrooveAnalysis && analysisProfile.localRefine) return refineSoftGrooveBeatTime(time, step);
-      if (!analysisProfile.transientRefine) return { time: time, score: 0, base: 0, refined: false };
-      var radius = Math.min(0.082, Math.max(0.026, (step || 0.55) * 0.13));
-      var point = bestTempoTransientFrameNear(time, radius);
-      var shift = point.time - time;
-      if (Math.abs(shift) < 0.011 || Math.abs(shift) > radius * 0.98) {
-        return { time: time, score: point.score, base: point.base, refined: false };
-      }
-      var gain = point.score - point.base;
-      var gainNeed = analysisProfile.hardRhythm ? 0.042 : 0.068;
-      var ratioNeed = analysisProfile.hardRhythm ? 1.035 : 1.085;
-      if (gain >= gainNeed && point.score >= point.base * ratioNeed) {
-        return { time: point.time, score: point.score, base: point.base, refined: true };
-      }
-      if (analysisProfile.hardRhythm && point.score > 0.62 && gain > 0.026) {
-        return { time: point.time, score: point.score, base: point.base, refined: true };
-      }
-      return { time: time, score: point.score, base: point.base, refined: false };
     }
 
     function scoreSoftGrooveTempoOffset(times, offset, step) {
@@ -10333,11 +10220,11 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
         var gridLike = Math.abs(prevGap - gridStep) < gridStep * 0.32 || Math.abs(nextGap - gridStep) < gridStep * 0.32;
         beats[bi].primary = beats[bi].camera && beats[bi].strength >= (gridLike ? 0.42 : 0.58);
       }
-      if (gridStep >= 0.30 && gridStep <= 0.88 && strongTimes.length >= (gridStep < 0.38 ? 8 : 4)) {
+      if (gridStep >= 0.38 && gridStep <= 0.88 && strongTimes.length >= 4) {
         var anchor = strongTimes[0];
         while (anchor - gridStep > 0.20) anchor -= gridStep;
         var gridBeats = [];
-        var windowSec = gridStep < 0.38 ? Math.min(0.115, gridStep * 0.26) : Math.min(0.18, gridStep * 0.30);
+        var windowSec = Math.min(0.18, gridStep * 0.30);
         for (var gt = anchor; gt < buffer.duration - 0.05; gt += gridStep) {
           var best = null;
           var bestDist = windowSec;
@@ -10389,7 +10276,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
     if (token !== beatMapToken) { hideBeatChip(); return null; }
     if (musicTempoResult && musicTempoResult.beats && musicTempoResult.beats.length) {
       musicTempoBeats = normalizeMusicTempoBeats(musicTempoResult.beats || [], buffer.duration);
-      musicTempoGridStep = medianGap(musicTempoBeats, 0.28, 1.00);
+      musicTempoGridStep = medianGap(musicTempoBeats, 0.36, 1.00);
       console.log('music-tempo worker:', musicTempoResult.tempo, 'bpm, beats:', musicTempoBeats.length, 'step:', musicTempoGridStep);
     }
 
@@ -10413,7 +10300,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
       var tempoMetrics = [];
       for (var ti = 0; ti < musicTempoBeats.length; ti++) {
         var mtTime = musicTempoBeats[ti];
-        var refinedPoint = refineTempoBeatTime(mtTime, musicTempoGridStep || gridStep);
+        var refinedPoint = refineSoftGrooveBeatTime(mtTime, musicTempoGridStep || gridStep);
         var metricTime = refinedPoint.time;
         var nearest = null;
         var nearestDist = tempoWindow;
@@ -10459,7 +10346,6 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
           snapMix: mtSnapMix,
           power: mtPower,
           softScore: refinedPoint.score || 0,
-          refined: !!refinedPoint.refined,
           index: ti
         });
       }
@@ -10484,9 +10370,6 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
       var bodyRiseCeil = Math.max(bodyRiseFloor + 0.001, percentile(tempoBodyRises, 0.90));
       var snapRiseFloor = Math.max(0.001, percentile(tempoSnapRises, 0.25));
       var snapRiseCeil = Math.max(snapRiseFloor + 0.001, percentile(tempoSnapRises, 0.90));
-      var tempoStepForTraits = musicTempoGridStep || gridStep || medianGap(musicTempoBeats, 0.28, 1.00) || 0;
-      var fastTempoGrid = tempoStepForTraits >= 0.28 && tempoStepForTraits < 0.46;
-      var hardRhythmGrid = !!analysisProfile.hardRhythm || fastTempoGrid;
       for (var tm = 0; tm < tempoMetrics.length; tm++) {
         var m = tempoMetrics[tm];
         var mtSlot = m.index % 4;
@@ -10497,9 +10380,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
         var lowRiseRel = clamp01(((m.lowRise || 0) - lowRiseFloor) / (lowRiseCeil - lowRiseFloor));
         var bodyRiseRel = clamp01(((m.bodyRise || 0) - bodyRiseFloor) / (bodyRiseCeil - bodyRiseFloor));
         var snapRiseRel = clamp01(((m.snapRise || 0) - snapRiseFloor) / (snapRiseCeil - snapRiseFloor));
-        var hardRhythmEvidence = clamp01(lowRiseRel * 0.34 + bodyRiseRel * 0.30 + snapRiseRel * 0.10 + lowRel * 0.14 + bodyRel * 0.12);
         var mtImpact = clamp01(powerRel * 0.50 + lowRel * 0.24 + bodyRel * 0.18 + snapRel * 0.08);
-        if (hardRhythmGrid) mtImpact = Math.max(mtImpact, clamp01(hardRhythmEvidence * 0.92 + powerRel * 0.10));
         if (m.nearest) mtImpact = Math.max(mtImpact, Math.min(1, m.nearest.strength * 0.58 + (m.nearest.primary ? 0.08 : 0)));
         if (softGrooveAnalysis) {
           mtImpact = clamp01(powerRel * 0.34 + lowRel * 0.18 + bodyRel * 0.18 + lowRiseRel * 0.24 + bodyRiseRel * 0.24 + snapRiseRel * 0.04);
@@ -10508,17 +10389,12 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
         var activeCamera = mtImpact >= 0.20 || (mtSlot === 0 && mtImpact >= 0.15 && (lowRel > 0.20 || bodyRel > 0.26));
         var activePulse = mtImpact >= 0.24 || (mtSlot === 0 && mtImpact >= 0.18);
         var grooveEvidence = lowRiseRel * 0.52 + bodyRiseRel * 0.48 + lowRel * 0.20 + bodyRel * 0.18;
-        if (hardRhythmGrid && !softGrooveAnalysis) {
-          activeCamera = activeCamera || mtImpact >= (fastTempoGrid ? 0.165 : 0.185) || (mtSlot === 0 && hardRhythmEvidence >= 0.34);
-          activePulse = activePulse || mtImpact >= (fastTempoGrid ? 0.205 : 0.225) || (mtSlot === 0 && hardRhythmEvidence >= 0.38);
-        }
         if (softGrooveAnalysis) {
           activeCamera = mtImpact >= 0.19 || (mtSlot === 0 && mtImpact >= 0.135 && grooveEvidence >= 0.32);
           activePulse = mtImpact >= 0.23 || (mtSlot === 0 && mtImpact >= 0.165 && grooveEvidence >= 0.28);
         }
         var downbeatLift = activeCamera ? (mtSlot === 0 ? 0.14 : (mtSlot === 2 ? 0.06 : 0)) : 0;
         var mtStrength = 0.26 + powerRel * 0.23 + lowRel * 0.10 + bodyRel * 0.08 + snapRel * 0.04 + downbeatLift;
-        if (hardRhythmGrid && !softGrooveAnalysis) mtStrength += hardRhythmEvidence * (fastTempoGrid ? 0.075 : 0.055) + (m.refined ? 0.018 : 0);
         if (m.nearest) mtStrength = Math.max(mtStrength, 0.42 + m.nearest.strength * 0.28);
         if (mtSlot === 0 && activeCamera) mtStrength = Math.max(mtStrength, 0.54 + mtImpact * 0.16);
         if (!activeCamera) mtStrength = Math.min(mtStrength, 0.36);
@@ -10533,17 +10409,11 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
           mtStrength = Math.max(0.30, Math.min(0.82, mtStrength));
         }
         var lowForCamera = Math.max(0.22, Math.min(0.78, m.lowMix * 0.82 + lowRel * 0.18));
-        var primaryCamera = activeCamera;
-        if (fastTempoGrid && !softGrooveAnalysis) {
-          primaryCamera = activeCamera && (mtSlot === 0 || mtSlot === 2 || mtImpact >= 0.42 || hardRhythmEvidence >= (analysisProfile.hardRhythm ? 0.56 : 0.64));
-        }
-        var comboName = mtSlot === 0 ? 'downbeat' : (mtSlot === 1 ? 'push' : (mtSlot === 2 ? 'drop' : 'rebound'));
-        if (!softGrooveAnalysis && hardRhythmGrid && mtImpact > 0.66 && mtSlot !== 0) comboName = 'accent';
         tempoCameraBeats.push({
           time: m.time,
           strength: mtStrength,
           confidence: m.nearest ? Math.max(0.60, m.nearest.confidence || 0) : Math.max(0.52, 0.48 + powerRel * 0.28),
-          primary: primaryCamera,
+          primary: activeCamera,
           camera: activeCamera,
           pulse: activePulse,
           impact: mtImpact,
@@ -10554,10 +10424,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
           snap: m.snapMix,
           mass: Math.max(0.35, Math.min(0.86, lowForCamera * 0.68 + m.bodyMix * 0.24 + mtStrength * 0.16)),
           sharpness: Math.max(0.08, Math.min(0.65, m.snapMix * 1.18)),
-          combo: comboName,
-          step: tempoStepForTraits,
-          fast: fastTempoGrid,
-          refined: !!m.refined,
+          combo: mtSlot === 0 ? 'downbeat' : (mtSlot === 1 ? 'push' : (mtSlot === 2 ? 'drop' : 'rebound')),
           index: m.index
         });
       }
@@ -10570,26 +10437,6 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
       }
     }
 
-    var rhythmEvents = (cameraBeats || []).filter(function(b){ return b && typeof b !== 'number'; });
-    var rhythmImpactSum = 0, rhythmBodySnapSum = 0, rhythmRefinedCount = 0, rhythmFastCount = 0;
-    for (var ri = 0; ri < rhythmEvents.length; ri++) {
-      var rbEvent = rhythmEvents[ri];
-      rhythmImpactSum += Math.max(rbEvent.impact || 0, rbEvent.strength || 0);
-      rhythmBodySnapSum += (rbEvent.body || 0) * 0.62 + (rbEvent.snap || 0) * 0.38;
-      if (rbEvent.refined) rhythmRefinedCount++;
-      if (rbEvent.fast) rhythmFastCount++;
-    }
-    var rhythmAvgImpact = rhythmEvents.length ? rhythmImpactSum / rhythmEvents.length : 0;
-    var rhythmAvgBodySnap = rhythmEvents.length ? rhythmBodySnapSum / rhythmEvents.length : 0;
-    var rhythmProfile = {
-      algoVersion: BEATMAP_ALGO_VERSION,
-      step: gridStep || 0,
-      fastTempo: !!(gridStep && gridStep >= 0.28 && gridStep < 0.46) || rhythmFastCount >= Math.max(4, rhythmEvents.length * 0.45),
-      hardRhythm: !!analysisProfile.hardRhythm || rhythmAvgBodySnap > 0.34 && rhythmAvgImpact > 0.22,
-      transientRefined: rhythmRefinedCount,
-      avgImpact: rhythmAvgImpact,
-      avgBodySnap: rhythmAvgBodySnap
-    };
     var kicks = beats.map(function(b){ return b.time; });
     var visualBeatCount = 0;
     var pulseBeats = cameraBeats.filter(function(b){
@@ -10616,7 +10463,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
     if (token !== beatMapToken) { hideBeatChip(); return null; }
     if (options.prefetch) hideBeatChip();
     else showBeatChip('节奏缓冲中…');
-    return { kicks: kicks, beats: beats, pulseBeats: pulseBeats, cameraBeats: cameraBeats, gridStep: gridStep, tempoSource: musicTempoBeats.length >= 4 ? 'music-tempo' : 'local', analysisProfile: analysisProfile.id || 'default', rhythmProfile: rhythmProfile, algoVersion: BEATMAP_ALGO_VERSION, duration: buffer.duration, visualBeatCount: visualBeatCount, analyzedAt: Date.now() };
+    return { kicks: kicks, beats: beats, pulseBeats: pulseBeats, cameraBeats: cameraBeats, gridStep: gridStep, tempoSource: musicTempoBeats.length >= 4 ? 'music-tempo' : 'local', analysisProfile: analysisProfile.id || 'default', duration: buffer.duration, visualBeatCount: visualBeatCount, analyzedAt: Date.now() };
   } catch (e) {
     console.warn('beat analysis failed:', e);
     hideBeatChip();
@@ -11464,8 +11311,6 @@ function packLocalBeatEvent(ev) {
   if (ev.dj) flags |= 8;
   if (ev.grid) flags |= 16;
   if (ev.kickOnly) flags |= 32;
-  if (ev.fast) flags |= 64;
-  if (ev.refined) flags |= 128;
   return [
     localBeatRound(ev.time, 1000),
     localBeatRound(ev.strength == null ? 0.42 : ev.strength, 1000),
@@ -11500,8 +11345,6 @@ function unpackLocalBeatEvent(row) {
     dj: !!(flags & 8),
     grid: !!(flags & 16),
     kickOnly: !!(flags & 32),
-    fast: !!(flags & 64),
-    refined: !!(flags & 128),
     mass: row[9] == null ? 0.62 : row[9],
     sharpness: row[10] == null ? 0.12 : row[10],
     step: row[11] || 0
@@ -11512,14 +11355,11 @@ function packLocalBeatMap(map) {
   var camera = (map.cameraBeats || map.beats || map.kicks || []).map(packLocalBeatEvent);
   var pulse = (map.pulseBeats || map.kicks || []).map(packLocalBeatEvent);
   return {
-    v: 2,
-    algoVersion: map.algoVersion || BEATMAP_ALGO_VERSION,
+    v: 1,
     duration: localBeatRound(map.duration || 0, 1000),
     gridStep: localBeatRound(map.gridStep || 0, 1000),
     sectionSteps: (map.sectionSteps || []).map(function(v){ return localBeatRound(v, 1000); }),
     tempoSource: map.tempoSource || 'local',
-    analysisProfile: map.analysisProfile || '',
-    rhythmProfile: map.rhythmProfile || null,
     visualBeatCount: map.visualBeatCount || camera.length,
     analyzedAt: map.analyzedAt || Date.now(),
     partial: !!map.partial,
@@ -11541,19 +11381,12 @@ function unpackLocalBeatMap(stored) {
     gridStep: stored.gridStep || 0,
     sectionSteps: stored.sectionSteps || [],
     tempoSource: stored.tempoSource || 'local',
-    analysisProfile: stored.analysisProfile || '',
-    rhythmProfile: stored.rhythmProfile || null,
-    algoVersion: stored.algoVersion || 0,
     duration: stored.duration || 0,
     visualBeatCount: stored.visualBeatCount || camera.length,
     analyzedAt: stored.analyzedAt || Date.now(),
     partial: !!stored.partial,
     partialUntilSec: stored.partialUntilSec || 0
   };
-}
-function isBeatMapAlgorithmCurrent(map) {
-  if (!map) return false;
-  return (map.algoVersion || 0) >= BEATMAP_ALGO_VERSION;
 }
 function readLocalBeatPrefs() {
   try { return JSON.parse(localStorage.getItem(LOCAL_BEAT_PREF_STORE_KEY) || '{}') || {}; }
@@ -11903,19 +11736,18 @@ function tickBeatMap() {
   var beatEvents = currentBeatMap.cameraBeats || currentBeatMap.beats || currentBeatMap.kicks || [];
   var pulseEvents = currentBeatMap.pulseBeats || currentBeatMap.kicks || [];
   var gridTimingLocked = currentBeatMap.tempoSource === 'music-tempo' && beatEvents.length >= 4;
-  var mapCanStandAlone = gridTimingLocked || (currentBeatMap.rhythmProfile && (currentBeatMap.rhythmProfile.fastTempo || currentBeatMap.rhythmProfile.hardRhythm) && beatEvents.length >= 4);
   var liveFreshWindow = Math.max(0.50, rtBeat.tempoGap ? rtBeat.tempoGap * 1.18 : 0.50);
   var realtimeHasLock = rtBeat.lastHitAt > 0 && (t - rtBeat.lastHitAt) < liveFreshWindow;
   while (beatCam.nextIdx < beatEvents.length) {
     var beat = beatEvents[beatCam.nextIdx];
     var beatTime = typeof beat === 'number' ? beat : beat.time;
     if (beatTime > t + beatCam.lookahead) break;
-    if (mapCanStandAlone || !realtimeHasLock) scheduleBeatCamera(beat, 'map');
+    if (gridTimingLocked || !realtimeHasLock) scheduleBeatCamera(beat, 'map');
     beatCam.nextIdx++;
   }
   while (beatMapNextIdx < pulseEvents.length && beatEventTime(pulseEvents[beatMapNextIdx]) <= t) {
     // 触发预演冲击
-    if (mapCanStandAlone || !realtimeHasLock) triggerScheduledBeat(pulseEvents[beatMapNextIdx]);
+    if (gridTimingLocked || !realtimeHasLock) triggerScheduledBeat(pulseEvents[beatMapNextIdx]);
     beatMapNextIdx++;
   }
 }
@@ -14896,7 +14728,8 @@ function weatherRadioContext() {
     mood: weather.mood && weather.mood.key || '',
   };
 }
-async function startWeatherRadio() {
+async function startWeatherRadio(opts) {
+  opts = opts || {};
   if (weatherRadioStartBusy) return;
   weatherRadioStartBusy = true;
   try {
@@ -15038,6 +14871,21 @@ function setHomeControlsLocked(locked) {
   if (bottom && locked && !hasActivePlaybackControls()) bottom.classList.add('soft-hidden');
   if (bottom && !locked) bottom.classList.remove('soft-hidden');
   if (locked) closeMiniQueue();
+}
+function openHomePlayerConsole() {
+  setHomeControlsLocked(false);
+  var bar = document.getElementById('bottom-bar');
+  if (bar) {
+    bar.classList.add('visible');
+    bar.classList.remove('soft-hidden');
+    bar.style.pointerEvents = '';
+  }
+  wakeBottomHandle(2800);
+  setControlsHidden(false);
+  forcePlaybackControlsInteractive();
+  updateControlsChromeState();
+  if (controlsAutoHide) scheduleControlsHide(1800);
+  showToast('播放器控制台已展开');
 }
 function ensureHomeWallpaperParticles(opts) {
   opts = opts || {};
@@ -16815,6 +16663,92 @@ function resumeAudioAnalysis() {
   return Promise.resolve();
 }
 
+function clearAudioFadeTimers() {
+  if (audioFadeTimer) {
+    clearTimeout(audioFadeTimer);
+    audioFadeTimer = null;
+  }
+  if (audioElementFadeFrame) {
+    cancelAnimationFrame(audioElementFadeFrame);
+    audioElementFadeFrame = 0;
+  }
+}
+function currentAudioOutputGain() {
+  if (gainNode && gainNode.gain && isFinite(gainNode.gain.value)) return clampRange(Number(gainNode.gain.value), 0, 1);
+  if (audio && isFinite(audio.volume)) return clampRange(Number(audio.volume), 0, 1);
+  return clampRange(targetVolume, 0, 1);
+}
+function setAudioOutputGainImmediate(value) {
+  value = clampRange(Number(value) || 0, 0, 1);
+  clearAudioFadeTimers();
+  if (gainNode && audioCtx) {
+    var now = audioCtx.currentTime || 0;
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(value, now);
+  } else if (audio) {
+    audio.volume = value;
+  }
+}
+function rampAudioOutputGain(value, durationMs) {
+  value = clampRange(Number(value) || 0, 0, 1);
+  durationMs = Math.max(0, Number(durationMs) || 0);
+  clearAudioFadeTimers();
+  var serial = audioFadeSerial;
+  if (gainNode && audioCtx) {
+    var now = audioCtx.currentTime || 0;
+    var start = currentAudioOutputGain();
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(start, now);
+    gainNode.gain.linearRampToValueAtTime(value, now + durationMs / 1000);
+    return;
+  }
+  if (!audio) return;
+  var from = currentAudioOutputGain();
+  var started = performance.now();
+  function tickAudioFade(nowMs) {
+    if (serial !== audioFadeSerial || !audio) return;
+    var t = durationMs ? clampRange((nowMs - started) / durationMs, 0, 1) : 1;
+    var eased = 1 - Math.pow(1 - t, 3);
+    audio.volume = from + (value - from) * eased;
+    if (t < 1) audioElementFadeFrame = requestAnimationFrame(tickAudioFade);
+    else audioElementFadeFrame = 0;
+  }
+  audioElementFadeFrame = requestAnimationFrame(tickAudioFade);
+}
+function preparePlaybackFadeIn() {
+  audioFadeSerial++;
+  setAudioOutputGainImmediate(0);
+}
+function startPlaybackFadeIn() {
+  audioFadeSerial++;
+  if (targetVolume <= 0.001) {
+    setAudioOutputGainImmediate(0);
+    return;
+  }
+  rampAudioOutputGain(targetVolume, 420);
+}
+function restorePlaybackGain() {
+  audioFadeSerial++;
+  setAudioOutputGainImmediate(targetVolume);
+}
+function fadeOutAndPauseAudio() {
+  if (!audio || audio.paused) return Promise.resolve(false);
+  var serial = ++audioFadeSerial;
+  rampAudioOutputGain(0, 340);
+  return new Promise(function(resolve) {
+    audioFadeTimer = setTimeout(function(){
+      audioFadeTimer = null;
+      if (serial !== audioFadeSerial || !audio) {
+        resolve(false);
+        return;
+      }
+      try { audio.pause(); } catch (pauseErr) { console.warn('[TogglePlayPause]', pauseErr); }
+      restorePlaybackGain();
+      resolve(true);
+    }, 360);
+  });
+}
+
 function applyVolumeToAudio() {
   if (audio) {
     audio.muted = false;
@@ -17147,6 +17081,8 @@ async function tryAutoPlaybackFallback(song, data, idx, token, opts) {
     return true;
   }
   if (!song || song.type === 'local' || song.type === 'podcast' || song.source === 'podcast') return false;
+  var restriction = (data && data.restriction) || {};
+  var category = (data && data.reason) || restriction.category || '';
   var fromLabel = playbackProviderLabel(song);
   var targetLabel = alternatePlaybackProvider(song) === 'qq' ? 'QQ 音乐' : '网易云';
   showSourceFallbackNotice('正在自动换源', fromLabel + ' 当前不可播，正在查找 ' + targetLabel + ' 的同名同歌手版本。');
@@ -17154,6 +17090,7 @@ async function tryAutoPlaybackFallback(song, data, idx, token, opts) {
     var alternate = await searchAlternatePlatformSong(song);
     if (token !== trackSwitchToken) return true;
     if (!alternate) {
+      if (category === 'login_required') return false;
       skipFailedQueueItem(idx, token, '没有找到同名同歌手的 ' + targetLabel + ' 版本，正在播放下一首。');
       return true;
     }
@@ -17190,6 +17127,8 @@ function pauseCurrentAudioForTrackSwitch() {
   playToggleBusy = false;
   if (!audio) return;
   try {
+    audioFadeSerial++;
+    clearAudioFadeTimers();
     audio.onended = null;
     audio.pause();
   } catch (e) {}
@@ -17311,6 +17250,7 @@ async function playQueueAt(idx, opts) {
       : await apiJson('/api/song/url?id=' + song.id + qualityParam);
     if (token !== trackSwitchToken) return;
     if (!data.url) {
+      if (isQQPlayback && await retryQQPlaybackWithCompatibleQuality(song, idx, token, opts, data, requestedQuality)) return;
       if (await tryAutoPlaybackFallback(song, data, idx, token, opts)) return;
       handlePlaybackUnavailable(song, data);
       return;
@@ -17330,7 +17270,11 @@ async function playQueueAt(idx, opts) {
     }
     markPlayPhase('audio-element');
     if (!audio) { audio = new Audio(); audio.crossOrigin = 'anonymous'; }
-    else audio.pause();
+    else {
+      audioFadeSerial++;
+      clearAudioFadeTimers();
+      audio.pause();
+    }
     bindPlaybackProgressEvents(audio);
     applyVolumeToAudio();
     var proxyAudioUrl = '/api/audio?url=' + encodeURIComponent(data.url);
@@ -17455,6 +17399,7 @@ async function attemptAudioPlay(opts) {
   try {
       if (!audio) return false;
       if (!audioReady) initAudio();
+      if (opts.fade !== false) preparePlaybackFadeIn();
       if (opts.manual) {
         var manualPlay = audio.play();
         await resumeAudioAnalysis();
@@ -17466,11 +17411,14 @@ async function attemptAudioPlay(opts) {
       await resumeAudioAnalysis();
       switchPlaybackVisualToEmily();
       playing = true; setPlayIcon(true);
+    if (opts.fade !== false) startPlaybackFadeIn();
+    else restorePlaybackGain();
     forcePlaybackControlsInteractive();
     hideLoading();
     return true;
   } catch (err) {
     console.warn('Audio play blocked:', err && (err.message || err));
+    restorePlaybackGain();
     playing = false; setPlayIcon(false);
     hideLoading();
     forcePlaybackControlsInteractive();
@@ -17495,7 +17443,7 @@ async function togglePlay() {
     if (audio.paused || audio.ended) {
       await attemptAudioPlay({ manual: true });
     } else {
-      try { audio.pause(); } catch (pauseErr) { console.warn('[TogglePlayPause]', pauseErr); }
+      await fadeOutAndPauseAudio();
       playing = false;
       setPlayIcon(false);
       hideLoading();
@@ -18906,7 +18854,7 @@ var presetMeta = [
   { name: '虚空', desc: '无粒子 · 自定义背景' },
   { name: '唱片', desc: '唱片 · 圆形封面' },
   { name: '星河', desc: '壁纸粒子 · 音乐律动' },
-  { name: '安魂', desc: '骷髅·YUI7W' },
+  { name: '安魂', desc: '骷髅·YUI7W', descHtml: '骷髅·<span class="pc-yui7w">YUI7W</span>' },
 ];
 var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 14c3-2 5-2 8 0s5 2 8 0M3 10c3-2 5-2 8 0s5 2 8 0M3 18c3-2 5-2 8 0s5 2 8 0"/></svg>',
@@ -18915,8 +18863,9 @@ var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/><path d="M8.8 8.8l6.4 6.4"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.4"/><path d="M16.5 5.2c2.1.9 3.4 2.4 4 4.5"/><path d="M18.8 3.2l1.5 4.8"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 15c2.2-4.4 4.4-4.4 6.6 0s4.4 4.4 6.6 0S20.6 10.6 23 15"/><path d="M3 9c2.2 2.2 4.4 2.2 6.6 0s4.4-2.2 6.6 0S20.6 11.2 23 9"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/></svg>',
-  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.2 17.5v-2.2c-2-1.2-3.1-3-3.1-5.1C5.1 6.5 8 4 12 4s6.9 2.5 6.9 6.2c0 2.1-1.1 3.9-3.1 5.1v2.2"/><path d="M9 19h6"/><path d="M9.7 20.8h4.6"/><circle cx="9.6" cy="10.4" r="1.35"/><circle cx="14.4" cy="10.4" r="1.35"/><path d="M12 12.6l-1.1 1.7h2.2z"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.2h4v6.2h4.2v3.8H14v7.6h-4v-7.6H5.8V9.4H10z"/></svg>',
 ];
+var presetDisplayOrder = [0, 6, 5, 4, 2, 1, 3];
 var lyricColorPresets = [
   { name:'雾蓝', color:'#a9b8c8' },
   { name:'银蓝', color:'#9db8cf' },
@@ -18937,6 +18886,242 @@ var lyricColorPresets = [
   { name:'酒红', color:'#6d1f35' },
   { name:'墨黑', color:'#111318' },
 ];
+var USER_FX_ARCHIVE_STORE_KEY = 'mineradio-user-fx-archives-v1';
+var USER_FX_ARCHIVE_SLOT_COUNT = 4;
+function defaultUserFxArchiveName(index) {
+  return '存档 ' + (index + 1);
+}
+function normalizeUserFxArchiveName(name, index) {
+  name = String(name || '').replace(/\s+/g, ' ').trim();
+  if (!name) name = defaultUserFxArchiveName(index);
+  return name.slice(0, 18);
+}
+function archiveNumber(raw, key, fallback, min, max) {
+  var value = raw && raw[key] != null ? Number(raw[key]) : fallback;
+  if (!isFinite(value)) value = fallback;
+  return clampRange(value, min, max);
+}
+function archiveMode(raw, key, pattern, fallback) {
+  var value = String(raw && raw[key] != null ? raw[key] : fallback);
+  return pattern.test(value) ? value : fallback;
+}
+function normalizeFxArchiveSnapshot(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  var savedPreset = clampRange(Number(raw.preset) || 0, 0, presetMeta.length - 1);
+  if (savedPreset === 3 && raw.visualPresetSchema !== VISUAL_PRESET_SCHEMA) savedPreset = 5;
+  return {
+    visualPresetSchema: VISUAL_PRESET_SCHEMA,
+    preset: savedPreset,
+    intensity: archiveNumber(raw, 'intensity', fxDefaults.intensity, 0.2, 1.6),
+    cinemaShake: archiveNumber(raw, 'cinemaShake', fxDefaults.cinemaShake, 0, 1.8),
+    depth: archiveNumber(raw, 'depth', fxDefaults.depth, 0.2, 1.8),
+    coverResolution: normalizeCoverResolution(raw.coverResolution),
+    point: archiveNumber(raw, 'point', fxDefaults.point, 0.5, 2.2),
+    speed: archiveNumber(raw, 'speed', fxDefaults.speed, 0.2, 2.5),
+    twist: archiveNumber(raw, 'twist', fxDefaults.twist, 0, 0.6),
+    color: archiveNumber(raw, 'color', fxDefaults.color, 0.5, 2.0),
+    scatter: archiveNumber(raw, 'scatter', fxDefaults.scatter, 0, 0.5),
+    bgFade: archiveNumber(raw, 'bgFade', fxDefaults.bgFade, 0, 1.2),
+    bloomStrength: archiveNumber(raw, 'bloomStrength', fxDefaults.bloomStrength, 0, 1.6),
+    lyricGlowStrength: archiveNumber(raw, 'lyricGlowStrength', fxDefaults.lyricGlowStrength, 0, 0.85),
+    lyricScale: archiveNumber(raw, 'lyricScale', fxDefaults.lyricScale, 0.35, 1.65),
+    lyricOffsetX: archiveNumber(raw, 'lyricOffsetX', fxDefaults.lyricOffsetX, -2.0, 2.0),
+    lyricOffsetY: archiveNumber(raw, 'lyricOffsetY', fxDefaults.lyricOffsetY, -1.2, 1.35),
+    lyricOffsetZ: archiveNumber(raw, 'lyricOffsetZ', fxDefaults.lyricOffsetZ, -1.6, 1.6),
+    lyricCameraLock: !!raw.lyricCameraLock,
+    lyricColorMode: raw.lyricColorMode === 'custom' ? 'custom' : 'auto',
+    lyricColor: normalizeHexColor(raw.lyricColor || fxDefaults.lyricColor),
+    lyricHighlightMode: raw.lyricHighlightMode === 'custom' ? 'custom' : 'auto',
+    lyricHighlightColor: normalizeHexColor(raw.lyricHighlightColor || fxDefaults.lyricHighlightColor),
+    lyricGlowLinked: raw.lyricGlowLinked !== false,
+    lyricGlowColor: normalizeHexColor(raw.lyricGlowColor || fxDefaults.lyricGlowColor),
+    lyricFont: normalizeLyricFontKey(raw.lyricFont),
+    lyricLetterSpacing: archiveNumber(raw, 'lyricLetterSpacing', fxDefaults.lyricLetterSpacing, -0.04, 0.18),
+    lyricLineHeight: archiveNumber(raw, 'lyricLineHeight', fxDefaults.lyricLineHeight, 0.86, 1.35),
+    lyricWeight: archiveNumber(raw, 'lyricWeight', fxDefaults.lyricWeight, 500, 900),
+    visualTintMode: raw.visualTintMode === 'custom' ? 'custom' : 'auto',
+    visualTintColor: normalizeHexColor(raw.visualTintColor || fxDefaults.visualTintColor),
+    uiAccentColor: normalizeHexColor(raw.uiAccentColor || fxDefaults.uiAccentColor, fxDefaults.uiAccentColor),
+    homeAccentColor: normalizeHexColor(raw.homeAccentColor || fxDefaults.homeAccentColor, fxDefaults.homeAccentColor),
+    homeIconColor: normalizeHexColor(raw.homeIconColor || fxDefaults.homeIconColor, fxDefaults.homeIconColor),
+    visualIconColor: normalizeHexColor(raw.visualIconColor || fxDefaults.visualIconColor, fxDefaults.visualIconColor),
+    backgroundColorMode: raw.backgroundColorMode === 'custom' || raw.backgroundColorCustom ? 'custom' : 'cover',
+    backgroundColor: normalizeHexColor(raw.backgroundColor || fxDefaults.backgroundColor, fxDefaults.backgroundColor),
+    backgroundOpacity: archiveNumber(raw, 'backgroundOpacity', fxDefaults.backgroundOpacity, 0, 1),
+    controlGlassChromaticOffset: archiveNumber(raw, 'controlGlassChromaticOffset', fxDefaults.controlGlassChromaticOffset, 0, 140),
+    backgroundColorCustom: raw.backgroundColorMode === 'custom' || !!raw.backgroundColorCustom,
+    floatLayer: !!raw.floatLayer,
+    cinema: raw.cinema !== false,
+    edge: !!raw.edge,
+    aiDepth: !!raw.aiDepth,
+    bloom: !!raw.bloom,
+    lyricGlow: raw.lyricGlow !== false,
+    lyricGlowBeat: raw.lyricGlowBeat !== false,
+    lyricGlowParticles: !!raw.lyricGlowParticles,
+    particleLyrics: raw.particleLyrics !== false,
+    backCover: !!raw.backCover,
+    shelf: archiveMode(raw, 'shelf', /^(off|side|stage)$/, fxDefaults.shelf),
+    cam: archiveMode(raw, 'cam', /^(off|gesture)$/, fxDefaults.cam)
+  };
+}
+function readUserFxArchives() {
+  var raw = [];
+  try {
+    raw = JSON.parse(localStorage.getItem(USER_FX_ARCHIVE_STORE_KEY) || '[]') || [];
+  } catch (e) {
+    raw = [];
+  }
+  var slots = [];
+  for (var i = 0; i < USER_FX_ARCHIVE_SLOT_COUNT; i++) {
+    var slot = raw[i] && typeof raw[i] === 'object' ? raw[i] : {};
+    var snapshot = normalizeFxArchiveSnapshot(slot.snapshot);
+    slots.push({
+      name: normalizeUserFxArchiveName(slot.name, i),
+      savedAt: snapshot ? (Number(slot.savedAt) || Date.now()) : 0,
+      snapshot: snapshot
+    });
+  }
+  return slots;
+}
+function saveUserFxArchives() {
+  try {
+    localStorage.setItem(USER_FX_ARCHIVE_STORE_KEY, JSON.stringify(userFxArchives));
+  } catch (e) {
+    showToast('用户存档保存失败，本地存储空间可能不足');
+  }
+}
+function formatUserArchiveTime(ts) {
+  ts = Number(ts) || 0;
+  if (!ts) return '空槽位';
+  var diff = Date.now() - ts;
+  if (diff < 60000) return '刚刚保存';
+  if (diff < 3600000) return Math.max(1, Math.round(diff / 60000)) + ' 分钟前';
+  var d = new Date(ts);
+  function pad(v) { return String(v).padStart(2, '0'); }
+  return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function captureFxArchiveSnapshot() {
+  return normalizeFxArchiveSnapshot(Object.assign({ visualPresetSchema: VISUAL_PRESET_SCHEMA }, fx));
+}
+function applySavedLyricPaletteState() {
+  if (!stageLyrics) return;
+  setStageLyricPalette(fx.lyricColorMode === 'custom'
+    ? lyricPaletteFromHex(fx.lyricColor)
+    : (stageLyrics.coverPalette || stageLyrics.palette));
+  updateLyricColorControls();
+  updateLyricHighlightControls();
+  updateLyricGlowControls();
+}
+function applyFxArchiveSnapshot(snapshot) {
+  var data = normalizeFxArchiveSnapshot(snapshot);
+  if (!data) return false;
+  var targetPreset = data.preset;
+  Object.keys(data).forEach(function(key){
+    if (key === 'visualPresetSchema' || key === 'preset') return;
+    fx[key] = data[key];
+  });
+  normalizeDevelopmentLockedFxState();
+  setPreset(targetPreset, { silent: true, preserveCamera: false, skipTransition: false, noSave: true });
+  applyCoverParticleResolution(fx.coverResolution, { reload: true });
+  if (fx.floatLayer) createFloatLayer(); else destroyFloatLayer();
+  setParticleLyricsSilently(fx.particleLyrics);
+  if (fx.backCover) createBackCoverLayer(); else destroyBackCoverLayer();
+  if (fx.aiDepth) {
+    aiDepthFailUntil = 0;
+    queueAIDepthForCurrentCover(true);
+  }
+  setShelfMode(fx.shelf);
+  setCamMode(fx.cam);
+  updateFxInputs();
+  applySavedLyricPaletteState();
+  refreshCurrentLyricStyle();
+  applyDesktopLyricsState(true);
+  applyWallpaperModeState(true);
+  saveLyricLayout();
+  return true;
+}
+var userFxArchives = readUserFxArchives();
+var userFxArchiveEditing = -1;
+function renderUserFxArchives() {
+  var grid = document.getElementById('user-archive-grid');
+  if (!grid) return;
+  grid.innerHTML = userFxArchives.map(function(slot, index){
+    var hasSave = !!slot.snapshot;
+    var editing = userFxArchiveEditing === index;
+    var nameHtml = editing
+      ? '<input class="user-archive-input" id="user-archive-input-' + index + '" type="text" maxlength="18" value="' + escHtml(slot.name) + '" onkeydown="handleUserFxArchiveRenameKey(event,' + index + ')">'
+      : '<div class="user-archive-name" title="' + escHtml(slot.name) + '">' + escHtml(slot.name) + '</div>';
+    var actionsHtml = editing
+      ? '<button type="button" onclick="commitUserFxArchiveRename(' + index + ')">确定</button>' +
+        '<button type="button" onclick="cancelUserFxArchiveRename()">取消</button>'
+      : '<button type="button" onclick="applyUserFxArchive(' + index + ')"' + (hasSave ? '' : ' disabled') + '>应用</button>' +
+        '<button type="button" onclick="saveUserFxArchive(' + index + ')">保存</button>' +
+        '<button type="button" onclick="renameUserFxArchive(' + index + ')">命名</button>';
+    return '<div class="user-archive-slot' + (hasSave ? ' has-save' : '') + '" data-slot="' + index + '">' +
+      nameHtml +
+      '<div class="user-archive-meta">' + formatUserArchiveTime(slot.savedAt) + '</div>' +
+      '<div class="user-archive-actions">' +
+        actionsHtml +
+      '</div>' +
+    '</div>';
+  }).join('');
+  if (userFxArchiveEditing >= 0) {
+    setTimeout(function(){
+      var input = document.getElementById('user-archive-input-' + userFxArchiveEditing);
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }, 0);
+  }
+}
+function saveUserFxArchive(index) {
+  index = clampRange(Number(index) || 0, 0, USER_FX_ARCHIVE_SLOT_COUNT - 1);
+  userFxArchives[index].snapshot = captureFxArchiveSnapshot();
+  userFxArchives[index].savedAt = Date.now();
+  userFxArchives[index].name = normalizeUserFxArchiveName(userFxArchives[index].name, index);
+  saveUserFxArchives();
+  renderUserFxArchives();
+  showToast('已保存到 ' + userFxArchives[index].name);
+}
+function applyUserFxArchive(index) {
+  index = clampRange(Number(index) || 0, 0, USER_FX_ARCHIVE_SLOT_COUNT - 1);
+  var slot = userFxArchives[index];
+  if (!slot || !slot.snapshot) {
+    showToast('这个用户存档还是空的');
+    return;
+  }
+  if (applyFxArchiveSnapshot(slot.snapshot)) {
+    showToast('已应用 ' + slot.name);
+  }
+}
+function renameUserFxArchive(index) {
+  index = clampRange(Number(index) || 0, 0, USER_FX_ARCHIVE_SLOT_COUNT - 1);
+  userFxArchiveEditing = index;
+  renderUserFxArchives();
+}
+function commitUserFxArchiveRename(index) {
+  index = clampRange(Number(index) || 0, 0, USER_FX_ARCHIVE_SLOT_COUNT - 1);
+  var input = document.getElementById('user-archive-input-' + index);
+  userFxArchives[index].name = normalizeUserFxArchiveName(input && input.value, index);
+  userFxArchiveEditing = -1;
+  saveUserFxArchives();
+  renderUserFxArchives();
+  showToast('已命名为 ' + userFxArchives[index].name);
+}
+function cancelUserFxArchiveRename() {
+  userFxArchiveEditing = -1;
+  renderUserFxArchives();
+}
+function handleUserFxArchiveRenameKey(e, index) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    commitUserFxArchiveRename(index);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    cancelUserFxArchiveRename();
+  }
+}
 
 function buildLyricColorControls() {
   var grid = document.getElementById('lyric-color-grid');
@@ -19488,11 +19673,23 @@ function setLyricHighlightCustom(color, silent) {
 
 function buildPresetGrid() {
   var grid = document.getElementById('preset-grid');
-  grid.innerHTML = presetMeta.map(function(p, i){
+  if (!grid) return;
+  var seen = {};
+  var order = presetDisplayOrder.filter(function(id){
+    var ok = id >= 0 && id < presetMeta.length && !seen[id];
+    seen[id] = true;
+    return ok;
+  });
+  presetMeta.forEach(function(_, id){
+    if (!seen[id]) order.push(id);
+  });
+  grid.innerHTML = order.map(function(i){
+    var p = presetMeta[i];
+    var desc = p.descHtml || p.desc;
     return '<div class="preset-card" data-preset="' + i + '" onclick="setPreset(' + i + ')">' +
       '<div class="pc-icon">' + presetIcons[i] + '</div>' +
       '<div class="pc-name">' + p.name + '</div>' +
-      '<div class="pc-desc">' + p.desc + '</div>' +
+      '<div class="pc-desc">' + desc + '</div>' +
     '</div>';
   }).join('');
   refreshPresetGrid();
@@ -19785,7 +19982,7 @@ function fxPanelTargetForNode(node, current) {
   if (!node) return current || 'presets';
   var id = node.id || '';
   var inputId = fxPanelInputId(node);
-  if (id === 'preset-grid') return 'presets';
+  if (id === 'preset-grid' || id === 'user-archive-grid') return 'presets';
   if (id === 'fx-lyric-fold') return 'lyrics';
   if (id === 'fx-overlay-fold' || id === 'fx-stage-fold') return 'motion';
   if (id === 'fx-advanced' || node.classList.contains('fx-actions')) return 'advanced';
@@ -19862,6 +20059,7 @@ function bindFxPanel() {
   liftFxFloatingPopups();
   organizeFxPanel();
   buildPresetGrid();
+  renderUserFxArchives();
   buildLyricColorControls();
   var ids = [
     ['fx-intensity','intensity'],['fx-depth','depth'],['fx-coverres','coverResolution'],['fx-cineshake','cinemaShake'],['fx-lyricglow','lyricGlowStrength'],['fx-bgopacity','backgroundOpacity'],['fx-glassaberration','controlGlassChromaticOffset'],
@@ -20899,7 +21097,7 @@ async function refreshLoginStatus(force) {
   }
 }
 function normalizeQQLoginStatus(info) {
-  var fallback = { provider: 'qq', loggedIn: false, preview: false, nickname: 'QQ 音乐', userId: '', avatar: '', vipType: 0, stale: false };
+  var fallback = { provider: 'qq', loggedIn: false, preview: false, nickname: 'QQ 音乐', userId: '', avatar: '', vipType: 0, stale: false, playbackKeyReady: false };
   if (!info || !info.loggedIn) return Object.assign({}, fallback, info || {}, {
     provider: 'qq',
     loggedIn: false,
@@ -20916,7 +21114,8 @@ function normalizeQQLoginStatus(info) {
     userId: info.userId || info.uin || '',
     avatar: info.avatar || '',
     vipType: Number(info.vipType || info.vip_type || 0) || 0,
-    stale: !!info.stale
+    playbackKeyReady: !!info.playbackKeyReady,
+    stale: !!info.stale || !!(info.profileUnavailable && !(info.nickname && info.avatar))
   });
 }
 async function refreshQQLoginStatus() {
@@ -21177,10 +21376,11 @@ async function openQQWebLogin() {
     qqManualCookieOpen = false;
     renderUserBtn();
     refreshUserPlaylists(true);
-    if (statusEl) { statusEl.textContent = 'QQ 音乐会话已保存'; statusEl.className = 'scan'; }
+    var qqPlaybackReady = !!info.playbackKeyReady && !result.partial;
+    if (statusEl) { statusEl.textContent = qqPlaybackReady ? 'QQ 音乐会话已保存' : 'QQ 账号已同步，播放授权不完整，部分歌曲会自动换源'; statusEl.className = 'scan'; }
     setTimeout(function(){
       closeLoginModal();
-      showToast('QQ 音乐已登录: ' + (info.nickname || info.userId || ''));
+      showToast((qqPlaybackReady ? 'QQ 音乐已登录: ' : 'QQ 账号已同步: ') + (info.nickname || info.userId || ''));
     }, 420);
   } catch (e) {
     qqWebLoginBusy = false;
@@ -21218,10 +21418,11 @@ async function submitQQCookieLogin() {
     if (input) input.value = '';
     renderUserBtn();
     refreshUserPlaylists(true);
-    if (statusEl) { statusEl.textContent = 'QQ 音乐会话已保存'; statusEl.className = 'scan'; }
+    var manualQQPlaybackReady = !!info.playbackKeyReady;
+    if (statusEl) { statusEl.textContent = manualQQPlaybackReady ? 'QQ 音乐会话已保存' : 'QQ 账号已同步，播放授权不完整，部分歌曲会自动换源'; statusEl.className = 'scan'; }
     setTimeout(function(){
       closeLoginModal();
-      showToast('QQ 音乐已登录: ' + (info.nickname || info.userId || ''));
+      showToast((manualQQPlaybackReady ? 'QQ 音乐已登录: ' : 'QQ 账号已同步: ') + (info.nickname || info.userId || ''));
     }, 420);
   } catch (e) {
     if (statusEl) { statusEl.textContent = e && e.message ? e.message : 'QQ 会话保存失败'; statusEl.className = 'fail'; }
@@ -23831,6 +24032,7 @@ function toggleFullscreen() {
 // ============================================================
 applyDiyMode(diyPlayerMode, { save: false });
 bindFxPanel();
+applySavedLyricPaletteState();
 bindQualityControl();
 bindVolumeControls();
 initControlGlassSurface();
@@ -24034,19 +24236,7 @@ function animate() {
         : (waitingForBeatMap
           ? (liveStrongHit || liveTempoHit)
           : (realtimeBeat.confidence > 0.84 && realtimeBeat.strength > 0.80 && realtimeBeat.low > 0.54 && (liveKickFrame || realtimeBeat.score > 0.68)));
-      var liveHybridOk = false;
-      if (!dj && beatMapReadyForCamera && currentBeatMap && liveKickFrame) {
-        var hybridFast = isFastRhythmMap(currentBeatMap, realtimeBeat);
-        var hybridHard = isHardRhythmMap(currentBeatMap);
-        liveHybridOk = (hybridFast || hybridHard) &&
-          realtimeBeat.confidence > (hybridFast ? 0.80 : 0.85) &&
-          realtimeBeat.strength > (hybridFast ? 0.66 : 0.72) &&
-          realtimeBeat.score > (hybridFast ? 0.50 : 0.56) &&
-          realtimeBeat.low > 0.48 &&
-          (bassOnset > (hybridFast ? 0.050 : 0.060) || realtimeBeat.tempoAssist);
-      }
-      var shouldScheduleLiveBeat = (!beatMapReadyForCamera && liveFallbackOk) || liveHybridOk;
-      if (shouldScheduleLiveBeat) {
+      if (!beatMapReadyForCamera && liveFallbackOk) {
         scheduleBeatCamera({
           time: realtimeBeat.time,
           strength: realtimeBeat.strength,
@@ -24057,17 +24247,15 @@ function animate() {
           mass: realtimeBeat.mass,
           sharpness: realtimeBeat.sharpness,
           combo: realtimeBeat.combo,
-          impact: clamp01(realtimeBeat.strength * 0.46 + realtimeBeat.confidence * 0.20 + realtimeBeat.low * 0.28 + (liveHybridOk ? 0.045 : 0)),
-          preview: waitingForBeatMap && !beatMapReadyForCamera,
-          hybrid: liveHybridOk,
+          impact: clamp01(realtimeBeat.strength * 0.46 + realtimeBeat.confidence * 0.20 + realtimeBeat.low * 0.28),
+          preview: waitingForBeatMap,
           primary: true,
           dj: dj
         }, 'live');
       }
-      if (shouldScheduleLiveBeat) {
-        var previewPulseScale = waitingForBeatMap && !dj && !beatMapReadyForCamera ? 0.68 : 1;
-        var rtPulseCap = dj ? 0.34 : (liveHybridOk ? 0.56 : (waitingForBeatMap ? 0.46 : 0.62));
-        var rtPulse = Math.min(rtPulseCap, realtimeBeat.strength * (realtimeBeat.tempoAssist ? (dj ? 0.42 : 0.62) : (dj ? 0.48 : 0.68)) * previewPulseScale);
+      if (!beatMapReadyForCamera && liveFallbackOk) {
+        var previewPulseScale = waitingForBeatMap && !dj ? 0.68 : 1;
+        var rtPulse = Math.min(dj ? 0.34 : (waitingForBeatMap ? 0.46 : 0.62), realtimeBeat.strength * (realtimeBeat.tempoAssist ? (dj ? 0.42 : 0.62) : (dj ? 0.48 : 0.68)) * previewPulseScale);
         if (rtPulse > beatPulse + 0.09) beatOnsetFlag = true;
         beatPulse = Math.max(beatPulse, rtPulse);
       }

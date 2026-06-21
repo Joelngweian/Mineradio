@@ -1347,21 +1347,61 @@ function serializeCookieObject(obj) {
 function qqCookieObject() {
   return parseCookieString(qqCookie);
 }
+function normalizeQQUin(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits.replace(/^0+/, '') || digits;
+}
 function qqCookieUin(obj) {
   obj = obj || qqCookieObject();
   const raw = Number(obj.login_type) === 2 ? (obj.wxuin || obj.uin || obj.p_uin) : (obj.uin || obj.qqmusic_uin || obj.wxuin || obj.p_uin);
-  return String(raw || '').replace(/\D/g, '');
+  return normalizeQQUin(raw);
 }
 function qqCookieMusicKey(obj) {
   obj = obj || qqCookieObject();
   return obj.qm_keyst || obj.qqmusic_key || obj.music_key || obj.p_skey || obj.skey ||
     obj.psrf_qqaccess_token || obj.psrf_qqrefresh_token || obj.wxrefresh_token || obj.wxskey || '';
 }
+function qqCookiePlaybackKey(obj) {
+  obj = obj || qqCookieObject();
+  return obj.qm_keyst || obj.qqmusic_key || obj.music_key || obj.wxskey || '';
+}
+function decodeQQCookieValue(value) {
+  try { return decodeURIComponent(String(value || '').replace(/\+/g, '%20')).trim(); }
+  catch (e) { return String(value || '').trim(); }
+}
+function qqCookieNickname(obj, uin) {
+  obj = obj || qqCookieObject();
+  uin = normalizeQQUin(uin || qqCookieUin(obj));
+  const padded = uin ? '0' + uin : '';
+  const keys = [
+    uin && ('ptnick_' + uin),
+    padded && ('ptnick_' + padded),
+    'ptnick',
+    'nick',
+    'nickname',
+    'qq_nickname'
+  ].filter(Boolean);
+  for (const key of keys) {
+    if (obj[key]) {
+      const nick = decodeQQCookieValue(obj[key]);
+      if (nick) return nick;
+    }
+  }
+  const ptnickKey = Object.keys(obj).find(key => /^ptnick_/i.test(key) && obj[key]);
+  return ptnickKey ? decodeQQCookieValue(obj[ptnickKey]) : '';
+}
+function qqCookieAvatar(obj, uin) {
+  obj = obj || qqCookieObject();
+  const direct = obj.qqmusic_avatar || obj.avatar || obj.avatarUrl || obj.headpic || '';
+  if (direct) return decodeQQCookieValue(direct);
+  uin = normalizeQQUin(uin || qqCookieUin(obj));
+  return uin ? `https://q1.qlogo.cn/g?b=qq&nk=${encodeURIComponent(uin)}&s=100` : '';
+}
 function normalizeQQCookieInput(cookieText) {
   const obj = parseCookieString(cookieText);
   if (Number(obj.login_type) === 2 && obj.wxuin && !obj.uin) obj.uin = obj.wxuin;
   if (!obj.uin && (obj.qqmusic_uin || obj.p_uin)) obj.uin = obj.qqmusic_uin || obj.p_uin;
-  if (obj.uin) obj.uin = String(obj.uin).replace(/\D/g, '');
+  if (obj.uin) obj.uin = normalizeQQUin(obj.uin);
   return serializeCookieObject(obj);
 }
 function playbackRestriction(provider, category, message, action, extra) {
@@ -1395,12 +1435,17 @@ function classifyNeteasePlaybackRestriction(lastData, loginInfo) {
   }
   return playbackRestriction('netease', 'url_unavailable', '网易云没有返回可播放地址，可能是版权、会员或地区限制', loggedIn ? 'switch_source' : 'login', { code, fee });
 }
-function classifyQQPlaybackRestriction(info, hasSession) {
+function classifyQQPlaybackRestriction(info, session) {
+  const hasSession = typeof session === 'object' ? !!session.hasSession : !!session;
+  const hasPlaybackKey = typeof session === 'object' ? !!session.hasPlaybackKey : hasSession;
   const rawMsg = String((info && (info.msg || info.tips || info.errmsg || info.message)) || '').trim();
   const code = Number((info && (info.result || info.code || info.errtype)) || 0);
   const lower = rawMsg.toLowerCase();
   if (!hasSession) {
     return playbackRestriction('qq', 'login_required', 'QQ 音乐需要登录或授权后才能获取播放地址', 'login', { code, rawMessage: rawMsg });
+  }
+  if (!hasPlaybackKey && code === 104003) {
+    return playbackRestriction('qq', 'login_required', 'QQ 音乐当前只拿到了网页登录状态，还缺少播放授权，请重新打开官方 QQ 音乐登录窗口完成授权', 'login', { code, rawMessage: rawMsg, missingPlaybackKey: true });
   }
   if (code === 104003) {
     return playbackRestriction('qq', 'copyright_unavailable', 'QQ 音乐没有给当前版本返回播放地址，通常是版权、会员或官方版本限制，可以换一个搜索结果或切到网易云源', 'switch_source', { code, rawMessage: rawMsg });
@@ -2149,8 +2194,11 @@ function normalizeQQProfile(body, cookieObj) {
   const data = (body && (body.data || body.profile || body.creator || body.result)) || {};
   const creator = (data.creator || data.user || data.profile || data) || {};
   const vipInfo = data.vipInfo || data.vipinfo || data.vip || creator.vipInfo || creator.vipinfo || {};
-  const nick = creator.nick || creator.nickname || creator.name || creator.hostname || creator.title || '';
-  const avatar = creator.headpic || creator.avatar || creator.avatarUrl || creator.logo || '';
+  const profileNick = creator.nick || creator.nickname || creator.name || creator.hostname || creator.title || '';
+  const profileAvatar = creator.headpic || creator.avatar || creator.avatarUrl || creator.logo || '';
+  const cookieNick = qqCookieNickname(cookieObj, uin);
+  const nick = profileNick || cookieNick || '';
+  const avatar = profileAvatar || qqCookieAvatar(cookieObj, uin);
   let vipType = Number(
     cookieObj.vipType || cookieObj.vip_type ||
     data.vipType || data.vip_type || data.viptype || data.music_vip_level || data.green_vip_level || data.luxury_vip_level ||
@@ -2170,6 +2218,8 @@ function normalizeQQProfile(body, cookieObj) {
     avatar,
     vipType,
     hasCookie: !!qqCookie,
+    playbackKeyReady: !!qqCookiePlaybackKey(cookieObj),
+    profileSource: profileNick || profileAvatar ? 'qq-profile' : (cookieNick || avatar ? 'cookie' : 'fallback'),
   };
 }
 
@@ -2537,12 +2587,16 @@ async function handleQQSongUrl(mid, mediaMid, qualityPreference) {
   const cookieObj = qqCookieObject();
   const uin = qqCookieUin(cookieObj) || '0';
   const musicKey = qqCookieMusicKey(cookieObj);
+  const playbackKey = qqCookiePlaybackKey(cookieObj);
   const fileMediaMid = String(mediaMid || '').trim();
   const requestedQuality = normalizeQualityPreference(qualityPreference);
-  const fileCandidates = fileMediaMid
-    ? qualityCandidatesFrom(requestedQuality, QQ_QUALITY_CANDIDATE_TEMPLATES)
-        .map(item => ({ ...item, filename: item.prefix + fileMediaMid + item.ext }))
-    : [];
+  const mediaIds = [];
+  if (fileMediaMid) mediaIds.push(fileMediaMid);
+  if (songmid && !mediaIds.includes(songmid)) mediaIds.push(songmid);
+  const fileCandidates = mediaIds.flatMap(mediaId =>
+    qualityCandidatesFrom(requestedQuality, QQ_QUALITY_CANDIDATE_TEMPLATES)
+      .map(item => ({ ...item, mediaId, filename: item.prefix + mediaId + item.ext }))
+  );
   const filenames = fileCandidates.map(item => item.filename);
   const param = {
     guid,
@@ -2581,13 +2635,17 @@ async function handleQQSongUrl(mid, mediaMid, qualityPreference) {
       requestedQuality,
     };
   }
-  const restriction = classifyQQPlaybackRestriction(info, !!(uin && musicKey));
+  const restriction = classifyQQPlaybackRestriction(info, {
+    hasSession: !!(uin && musicKey),
+    hasPlaybackKey: !!(uin && playbackKey),
+  });
   return {
     provider: 'qq',
     url: '',
     playable: false,
     error: 'QQ_URL_UNAVAILABLE',
     loggedIn: !!(uin && musicKey),
+    playbackKeyReady: !!(uin && playbackKey),
     restriction,
     reason: restriction.category,
     message: restriction.message,

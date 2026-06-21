@@ -194,6 +194,16 @@ function qqCookieHasLogin(cookieText) {
   return !!(uin && musicKey);
 }
 
+function qqCookieHasPlaybackLogin(cookieText) {
+  const obj = parseCookieHeader(cookieText);
+  const rawUin = Number(obj.login_type) === 2
+    ? (obj.wxuin || obj.uin || obj.p_uin || '')
+    : (obj.uin || obj.qqmusic_uin || obj.wxuin || obj.p_uin || '');
+  const uin = String(rawUin).replace(/\D/g, '');
+  const playbackKey = obj.qm_keyst || obj.qqmusic_key || obj.music_key || obj.wxskey || '';
+  return !!(uin && playbackKey);
+}
+
 function neteaseCookieHasLogin(cookieText) {
   const obj = parseCookieHeader(cookieText);
   return !!obj.MUSIC_U;
@@ -336,7 +346,7 @@ async function openNeteaseMusicLoginWindow(owner) {
       try {
         const cookie = await readNeteaseLoginCookieHeader(cookieSession);
         resolve(neteaseCookieHasLogin(cookie)
-          ? { ok: true, cookie }
+          ? { ok: true, cookie, partial: !qqCookieHasPlaybackLogin(cookie) }
           : { ok: false, cancelled: true, message: '网易云登录窗口已关闭' });
       } catch (e) {
         resolve({ ok: false, error: e.message || '网易云登录窗口已关闭' });
@@ -351,11 +361,12 @@ async function openNeteaseMusicLoginWindow(owner) {
 async function openQQMusicLoginWindow(owner) {
   const cookieSession = session.fromPartition(QQ_LOGIN_PARTITION);
   const initialCookie = await readQQLoginCookieHeader(cookieSession);
-  if (qqCookieHasLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
+  if (qqCookieHasPlaybackLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
 
   return new Promise((resolve) => {
     let settled = false;
     let pollTimer = null;
+    let warmupStarted = false;
 
     const loginWindow = new BrowserWindow({
       width: 900,
@@ -390,8 +401,15 @@ async function openQQMusicLoginWindow(owner) {
     const checkCookies = async () => {
       try {
         const cookie = await readQQLoginCookieHeader(cookieSession);
-        if (qqCookieHasLogin(cookie)) {
+        if (qqCookieHasPlaybackLogin(cookie)) {
           finish({ ok: true, cookie });
+        } else if (qqCookieHasLogin(cookie) && !warmupStarted) {
+          warmupStarted = true;
+          setTimeout(() => {
+            if (!settled && loginWindow && !loginWindow.isDestroyed()) {
+              loginWindow.loadURL('https://y.qq.com/n/ryqq/player').catch((e) => console.warn('QQ login warmup navigation failed:', e.message));
+            }
+          }, 900);
         }
       } catch (e) {
         console.warn('QQ login cookie check failed:', e.message);

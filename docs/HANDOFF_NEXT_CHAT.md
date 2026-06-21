@@ -36,6 +36,7 @@ Get-Content docs\HANDOFF_NEXT_CHAT.md
 - 骷髅预设已改名为“安魂”，第二行是“骷髅·YUI7W”，卡片使用黑体；自定义视觉色会同步强化骷髅粒子颜色，蓝色不再被金色骨色明显中和。
 - 软件内更新日志和 GitHub Release notes 使用文案：`反正没什么人看，布想写日志了`。
 - 已上传完整安装包、`latest.yml`、blockmap，以及 `1.0.0` 到 `1.0.6` 升 `1.0.7` 的快速补丁。
+- 当前未发布改动：QQ 音乐接口播放授权记录已保存到 `docs/QQ_MUSIC_INTERFACE_NOTES.md` 和 `docs/PROJECT_MEMORY.md`；Home 左侧大卡片改为“🚧此处施工，敬请期待🚧”，支持展开播放器控制台；视觉预设显示顺序改为 emily、安魂、星河、唱片、星球、滚筒、虚空；视觉控制台新增 4 槽位“用户存档”；启动时会重新应用已保存的歌词预设/自定义颜色。
 
 ## 发布资产
 
@@ -53,7 +54,8 @@ Get-Content docs\HANDOFF_NEXT_CHAT.md
 ## 当前工作树提醒
 
 - `main` 已推送到 `origin/main`，`v1.0.7` tag 已推送。
-- 当前只剩未跟踪临时验证目录：`.playwright-cli/`、`output/`。
+- 当前有未发布修改：`desktop/main.js`、`server.js`、`public/index.html`、`docs/PROJECT_MEMORY.md`、`docs/HANDOFF_NEXT_CHAT.md`，以及新增 `docs/QQ_MUSIC_INTERFACE_NOTES.md`。
+- 未跟踪临时验证目录：`.playwright-cli/`、`output/`。
 - 这些临时目录不在发布包里，不要误提交；也不要删除备份。
 
 ## 重要习惯

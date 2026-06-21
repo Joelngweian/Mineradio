@@ -9,7 +9,7 @@
 - 真实代码/Git 仓库：`E:\桌面\播放器软件\Mineradio\resources\app`
 - GitHub 仓库：`https://github.com/XxHuberrr/Mineradio.git`
 - 统一备份目录：`E:\桌面\播放器软件\工作区备份`
-- 当前版本基线：`v1.0.7`
+- 当前版本基线：`v1.0.8`
 - 发布入口：GitHub Releases，更新检查依赖 `latest.yml` 和可选轻量补丁 JSON。
 
 ## Workspace Organization
@@ -23,6 +23,20 @@
 
 ## Release Memory
 
+- `v1.0.8` 已发布到 GitHub：`https://github.com/XxHuberrr/Mineradio/releases/tag/v1.0.8`
+- `v1.0.8` Release 资产包括：
+  - `latest.yml`
+  - `Mineradio-1.0.8-Setup.exe`
+  - `Mineradio-1.0.8-Setup.exe.blockmap`
+  - `Mineradio-1.0.0-to-1.0.8.patch.json`
+  - `Mineradio-1.0.1-to-1.0.8.patch.json`
+  - `Mineradio-1.0.2-to-1.0.8.patch.json`
+  - `Mineradio-1.0.3-to-1.0.8.patch.json`
+  - `Mineradio-1.0.4-to-1.0.8.patch.json`
+  - `Mineradio-1.0.5-to-1.0.8.patch.json`
+  - `Mineradio-1.0.6-to-1.0.8.patch.json`
+  - `Mineradio-1.0.7-to-1.0.8.patch.json`
+- `v1.0.8` 包含 QQ 音乐播放授权修复、Home 施工卡片和控制台展开、视觉预设顺序调整、用户存档、歌词颜色重启恢复、播放/暂停淡入淡出，以及安魂十字架选中态蓝色修复。
 - `v1.0.7` 已发布到 GitHub：`https://github.com/XxHuberrr/Mineradio/releases/tag/v1.0.7`
 - `v1.0.7` Release 资产包括：
   - `latest.yml`
@@ -168,3 +182,10 @@
 - 涉及文件：`public/index.html`
 - 关键参数/实现：`SKULL_MODEL_BASE_ROTATION_X = -0.26`、`SKULL_MODEL_SCALE = 2.34`、`SKULL_MODEL_BASE_POSITION.y = 0.22`；默认骷髅相机 `pos=(0,-2.52,4.98)`、`look=(0,-0.20,0.02)`，保持低机位仰视压迫感。
 - 禁止回退或改坏的点：不要把双击回正改回平视；不要让歌词从嘴部锁定跳到普通镜头歌词位置；3D 歌单架打开时应使用左侧大骷髅近景、右侧偏中歌单架构图。
+
+### 2026-06-21 - QQ 音乐接口播放授权排障记录
+
+- 用户认可/要求保留：保存这次 QQ 音乐接口修复记录；以后遇到 QQ 登录后头像/昵称异常、歌单能读但歌曲不能播、`104003` 等同类问题，优先按本记录排查。
+- 涉及文件：`docs/QQ_MUSIC_INTERFACE_NOTES.md`、`server.js`、`desktop/main.js`、`public/index.html`。
+- 关键参数/实现：区分网页账号态 `p_skey` 和播放票据 `qm_keyst`/`qqmusic_key`/`music_key`/`wxskey`；`/api/qq/login/status` 返回 `playbackKeyReady`；缺播放票据时 `104003` 归类为 `login_required`；昵称头像用 `ptnick_*` 和 `qlogo.cn` 兜底。
+- 禁止回退或改坏的点：不要再把 `p_skey` 当作完整 QQ 音乐播放授权；不要因为 QQ 资料接口 `code:1000` 就清空头像/昵称或标记未登录；修 QQ 播放前先读 `docs/QQ_MUSIC_INTERFACE_NOTES.md`。
