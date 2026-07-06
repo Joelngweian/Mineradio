@@ -75,6 +75,46 @@
 
 ## 已完成工作日志
 
+### 2026-07-04
+
+- 【app 图标 dev 模式显示通用文档图标】用户反馈启动后 logo 变空白文档。排查：build/icon.ico 有效(7 尺寸 16-256)、main.js 主窗口 icon:APP_ICON_ICO、setAppUserModelId、title 都正常——是 Electron dev(npm start)已知现象:任务栏用 electron.exe 通用图标，真实图标只在打包 exe 生效。改善：主窗口创建后加 mainWindow.setIcon(icon.ico，回退 icon.png)，配合已有的 setAppUserModelId 尽量让 dev 任务栏显示真实图标。定论仍是打包后 exe 图标正确。
+
+- 【华语歌词时间轴回归 LrcLib 优先】用户反馈华语歌用网易云歌词时间轴不准。原因：之前为日语覆盖把 CJK 全改网易云优先，连 LrcLib 有且对得更准的华语歌也被顶掉(网易云用它自己版本时间轴，会漂)。改回：resolveLyrics 一律 LrcLib 优先(LrcLib 按时长匹配，时间轴最贴合正在播放的 YTM 版本)→ 同步歌词没有时 CJK 用网易云补覆盖(日语仍能拿到)→ LrcLib 纯文本 → 非 CJK 网易云兜底 → YTM 纯文本。这样华语用 LrcLib(准)、日语 LrcLib 缺失时落网易云(有覆盖)。注：网易云做音源不可行(海外/马来西亚版权地区封锁+VIP，正是当初迁走原因)。不同版本歌靠 LrcLib 时长匹配自动挑最接近版本；进一步需手动歌词偏移(offset)微调，尚未实现。
+
+- 【电台接续/自动续播】用户要求搜一首播放后自动接推荐(非歌单)。后端新增 mapPanelVideo() + /api/radio?id= 用 yt.music.getUpNext(id,true) 返回相关推荐(自动电台队列)。前端 maybeExtendQueueWithRadio(song)：当前歌是队列最后一首且是 YTM 歌(非播客/本地)时，后台拉 /api/radio 去重追加到 playQueue；在 playQueueAt 的 session-begin 后非阻塞调用。radioSeedId 防同种子重复拉；队列每到底用新末尾歌当种子→无限接续。歌单会先放完再接电台(因为只在 currentIdx>=length-1 触发)。radioAutoplayOn 默认 true(暂无 UI 开关)。沙盒无 YT 需本机验证。
+
+- 【控制台中文乱码】Windows 控制台默认 GBK/936 代码页把 UTF-8 中文日志显示成乱码(英文正常)。在 desktop/main.js 和 server.js 顶部加 win32 下 execSync('chcp 65001',{stdio:ignore}) 切 UTF-8 代码页。仅影响 npm start 开发控制台，打包 exe 无控制台不受影响。(又踩挂载截断：Edit server.js 后尾 server.listen 块丢失，python 补回；后续改 server.js 尽量用 bash/python。)
+
+- 【CJK 歌词优先网易云】用户要求日语歌走网易云。重构 fetchNeteaseLyric(取原词+译词，有时间轴即返回)，fetchNeteaseTranslatedLyric 复用它仅在有译词时返回。resolveLyrics 瀑布改为：looksCJK(假名 \u3040-\u30FF + 中日韩汉字 \u3400-\u9FFF + 谚文 \uAC00-\uD7A3) 为真→网易云原词优先(LrcLib 兜底)；非 CJK→LrcLib 优先(网易云兜底)；再 LrcLib 纯文本 / YTM 纯文本。放宽到 CJK 是因为罗马字标题的日语歌(如 Lemon/米津玄師)只能靠汉字歌手名识别，且网易云对中文/韩文覆盖也好。注意：CJK 歌原词改用网易云时间轴(它挑时长最接近版本)，可能与播放版本略有偏差——这是覆盖率 vs 精确对齐的取舍。其它可选源(未接)：酷狗 KRC 逐字、QQ 音乐，均中国服务器有同样稳定性顾虑；LrcLib 是唯一非中国、最稳的。
+
+- 【翻译质量升级 + 时间轴对齐】用户反馈 Google 免费翻译日语差(如把「ざまあ/活該」音译成扎马)、且担心网易云翻译时间轴对不上(不同版本/翻唱)。方案:/api/lyric/translate 优先网易云社区人工双语歌词(music.163.com/api/song/lyric?tv=1，公开接口无需登录，仅借用其翻译文字，非恢复音乐源)。关键:不用网易云时间轴——把网易云 原词↔译词 按时间戳配对成 归一化原词→译词 map，再用【前端传来的 LrcLib 原词行】做文字匹配取译文，套 LrcLib 时间轴(=按播放版本时长匹配，与音频对齐)；匹配≥40%才采用，未匹配行 Google 补翻，匹配<40%(版本差异大)整首退回机翻。requestText 加 timeoutMs(网易云 5-6s)。前端只用 r.translated 套原词行。新增 parseLrcEntries/normLyricLine/buildNeteaseTransMap。沙盒墙了 music.163/googleapis，需本机验证；网易云在马来西亚可能慢/不稳，慢时会 5-6s 后回退机翻。
+
+- 【新功能：歌词中文翻译切换】后端 googleTranslateLines()(translate.googleapis.com 免费 gtx 端点，40 行/块，逐行 \n 对齐) + POST /api/lyric/translate {lines,to}→{translated}。前端新增 lyricTranslation 状态 + toggleLyricTranslation/applyLyricTranslationState(POST 原词行→译词行，复用原 t/duration，words 置空不做逐字)/applyTranslatedLyricsState(lyricSourceMode=translated)/updateLyricTranslateBtn；fetchLyric 新歌后 resetLyricTranslationForNewSong()(清缓存，开关开着则自动重译，静默)。UI：控制栏「词」按钮后加 #lyric-translate-btn「译」(复用 .ctrl-btn.active/.busy 样式)。译词缓存按 songLyricTranslateKey。Google 翻译不可达时返回空→前端回退原文，不崩。沙盒墙了 googleapis，需本机验证。
+
+- 【歌词几乎全空修复】原 /api/lyric 只用 yt.music.getLyrics(id)：只返回纯文本(无时间轴,3D 粒子没法同步)且覆盖率低。照 Metrolist 改成多源瀑布：主力 LrcLib(lrclib.net，按 歌名+歌手(取主歌手)+专辑+时长 精确匹配 /api/get，失败走 /api/search 选带 syncedLyrics 且时长最近的)返回逐行时间轴 LRC 塞进 r.lyric(前端 parseLyricText 解析时间戳)；YTM 内置歌词作纯文本兜底。新增 fetchLrcLibLyrics()+resolveLyrics()(带 500 条缓存)，/api/lyric 与 handleSpotifyLyric 都走 resolveLyrics。前端 fetchLyric 现在把 name/artist/album/duration(秒) 传给后端。沙盒连不上 lrclib.net(000)，需本机验证；若用户在墙内且 lrclib 被挡，需配代理。
+
+- 【Daily 真实个性化推荐】原 handleDiscoverHome 的 dailySongs 只取一个写死歌单（VLPL4fGSI...Top100 Global）的前 12 首，对所有人一样、非每日非个性化。改为：登录时优先 yt.music.getHomeFeed()（YouTube Music 真实首页 Quick Picks/为你推荐），新增 extractHomeFeedSongs() 从 feed.sections 各 shelf 抽取 11 位 videoId 的可播放歌曲；返回加 personalized 标志；拿不到/未登录才回退全球榜单。首页审计结论：我的歌单(/api/user/playlists 真实库)、继续听(本地播放历史)、听歌画像/常听歌手(播放历史统计)本来就是真实的；只有 Daily/私人雷达 是假的，本次修复。需本机登录 YTM 验证真实推荐效果。
+
+- 【节奏分析永久卡住修复】症状：每首歌点进去一直显示“正在分析节奏”不停。根因：节奏分析要完整下载整曲解码（analyzeAudioBeats 对 /api/audio?url=ytm: 不带 Range 的完整 fetch），而 googlevideo 对无 Range 的整段下载会限速到播放速度（throttling），一首 3 分钟歌要下 3 分钟。修复：server.js /api/audio 的 ytm 分支——带 Range（播放/seek）保持单次透传；不带 Range（完整下载/分析）改为 1MB 分块 Range 顺序拉取绕过限速（用 fmt.contentLength 判定结束，首块失败才回退 download()）。前端 analyzeAudioBeats 加 90s AbortController 超时兜底防止未来挂死。节奏律动本身逻辑没问题（OfflineAudioContext 分频段检测真实鼓点→beatmap→驱动镜头/粒子），之前跑不动纯粹是拿不到完整音频。沙盒无 YT 出口，需本机验证。
+
+- 登录 UI 改版：把顶部标签切换+单卡片的登录弹窗改成两行式平台选择器（一行 YouTube Music、一行 Spotify），点任一行直接拉起该平台官方授权窗口；行内显示 busy（登录中…）/connected（已连接）状态。删除 tabs、qr-shell、title/desc、我两个都要 等旧元素；Spotify 手动 cookie 导入保留为常驻次级按钮，桌面窗口不可用时自动展开。新增 startProviderLogin(provider)，重写 updateLoginProviderUi/refreshQr。setLoginProvider 变为无害死代码。
+- 音质选择器已删：YTM 音源是后端匹配的明文流，前端选音质无意义（网易云/QQ 遗留）。删掉底部 quality-control UI 和对应引导步骤；playbackQuality 相关 JS 保留为 null-safe 空操作。
+
+- 【音源核心重写·照搬 Metrolist】读了 Metrolist 源码（innertube/InnerTube.kt + YouTubeClient.kt）后确认：它不依赖 youtubei.js 拿流，而是直接 POST music.youtube.com/youtubei/v1/player，用 ANDROID_VR（Oculus Quest）客户端、loginSupported=false 所以【不带任何 cookie/Authorization 头】→ YouTube 对该客户端免 PoToken 且返回明文直链无需解密。youtubei.js 失败根因：它用 ANDROID_VR 1.65.10（新版易被封）且带 cookie 请求破坏免 PoToken。已在 server.js 重写 resolveYtmAudioFormat：手写 player 请求，客户端顺序 ANDROID_VR 1.43.32（Metrolist 选定，非自适应码率修复 YT Music 卡顿）→ ANDROID_VR 1.61.48 → TVHTML5_SIMPLY_EMBEDDED_PLAYER（年龄限制兜底）；pickBestAudioFormat 按 itag(251/140 优先)+bitrate 选纯音频明文格式；visitorData 复用 youtubei.js session。/api/audio 直链代理透传 Range 支持 seek，download() 仍作兜底。非 ytm 分支简化为通用透传，顺带删掉最后两个带 music.163/y.qq Referer 的残留函数。沙盒无 YT 出口只能验证结构（三客户端按序尝试、不崩、502 正常），需本机端到端测。
+- 【再次踩坑】J:\Mineradio 挂载写入截断又发生 2 次：file 工具 Edit server.js 后尾部（/api/audio 全段+静态服务+server.listen）丢失。已改用 bash/python 在 Linux 挂载路径重建。教训：server.js 这类大文件的改动尽量用 bash/python 在 /sessions/.../mnt 路径做，file 工具 Edit 后必须 node --check + tail 验证。
+
+- 【关键】播放 400/无法解密 根因修复：你本机日志显示 youtubei.js player 接口对 ANDROID/IOS 返回 400、WEB 报 No valid URL to decipher——这是 YouTube 2024-2025 强制 PoToken 所致，17.2.0 已是最新版无法靠升级解决。改 YTM_AUDIO_CLIENTS 首选 ANDROID_VR（Oculus Quest 客户端，当前免 PoToken 且返回明文直链无需解密），回退顺序 ANDROID_VR→TV→WEB_EMBEDDED→IOS→MWEB→ANDROID→WEB；download() 兜底默认客户端也改 ANDROID_VR。沙盒无 YouTube 出口无法端到端验证，需本机确认。若 ANDROID_VR 日后也被封，终极方案是引入 bgutils-js+jsdom 生成 poToken+visitor_data。
+- 注意 J:\Mineradio 挂载偶发写入截断：本轮 Edit 后 server.js 尾部 server.listen 块丢失，已用 python 补回并核对函数/路由完整；每次大改后务必 node --check + 尾部检查。
+
+- Spotify 播放遗留 bug 修复：退休从 QQ 继承的音质降级重试（retrySpotifyPlaybackWithCompatibleQuality 改 no-op）——Spotify 播放走 YTM 匹配与音质无关，旧逻辑会用不同音质参数重试同一 videoId 且弹误导性提示、抢在自动播放判断前执行；/api/spotify/song/url|lyric|artist/detail|song/comments 前端参数统一改为 id=spotifyId（原来传 Spotify 曲目根本不存在的 song.mid）。冒烟测试 7 条 spotify 路由均结构正确、未登录优雅降级。
+
+- 播放被拦截修复：/api/audio 的 ytm: 分支改为多客户端回退解析直链（ANDROID→IOS→TV_EMBEDDED→WEB，getStreamingData），代理转发透传 Range 支持进度条 seek，直链失败回退 yt.download()，全败返回 502 JSON；新增 resolveYtmAudioFormat() 直链缓存 40 分钟与 /api/debug/audio 诊断端点。前端 attemptAudioPlay 区分 NotAllowedError（自动播放策略，提示点击）与音源失败（自动跳队列下一首/提示换源）。注意：沙盒无 YouTube 网络出口，音频端到端需本机验证。
+
+- 按用户要求把所有网易云/QQ 逻辑替换干净：server.js 删除全部 QQ 后端与网易云死代码（约 900 行），新增 Spotify 真实后端 `/api/spotify/*`（sp_dc 会话 + Web API + TOTP），播放/歌词/评论自动匹配 YouTube Music 音源；评论统一 YouTube 评论源。
+- desktop/main.js、preload.js、public/index.html 彻底改名（netease/qq → google\|youtube/spotify，含 IPC 通道、CSS 类、API 路径，约 500 处）；本地历史数据旧 provider 值与 'qq:' 歌单前缀保留兼容解析。
+- package.json 移除 `NeteaseCloudMusicApi`、`spotify-web-api-node`；`.qq-cookie` → `.spotify-cookie` 自动迁移；README/PRIVACY/NOTICE/SECURITY/RELEASE/.gitignore 同步更新；docs/QQ_MUSIC_INTERFACE_NOTES.md 标记废弃归档。
+- 验证：node --check 通过（server.js、desktop/main.js）、前端内联脚本 vm 解析通过、前后端 API 路径与 IPC 桥方法逐一比对一致；未上传或推送 GitHub。
+
 ### 2026-06-24
 
 - 将 `E:\Download\默认测试.json` 接入为首次启动默认用户存档和默认视觉参数；新增 `public/default-user-fx-archive.json`，并让没有本地用户存档的新用户自动得到「默认测试」槽位。
@@ -163,6 +203,9 @@
 - 注意：本机 `gh` 命令曾被失效代理 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:26001` 挡住。使用 GitHub CLI 发布时可在当前命令里临时清空 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 后再执行。
 
 ## 未完成/待确认事项
+
+- Spotify 令牌接口（get_access_token + TOTP）为社区参数，Spotify 轮换后需更新 server.js `spotifyTotpSecretBytes()`；建议真机连一次 Spotify 账号做端到端验证。
+- Spotify 歌曲的红心/收藏同步（/v1/me/tracks PUT）尚未实现，前端仍是占位 toast。
 
 - `v1.1.0` 发布时不要上传 `latest.yml` 或快速补丁；Release 需要通过 `--latest=false` 或等价 API 避免成为旧版软件内更新通道的 latest。
 - 搜索结果排序仍需要继续优化：例如“日落大道”应优先梁博原唱，“Beauty and a Beat”应优先原唱/官方版本，避免翻唱排第一。

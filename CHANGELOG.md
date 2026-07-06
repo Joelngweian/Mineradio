@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.2.0
+
+- 架构彻底改造：全面移除网易云音乐 (`NeteaseCloudMusicApi`) 与 QQ 音乐遗留接口底座，后端彻底转型为 Metrolist 风格。
+- YouTube Music 原生对接：主账号及搜索、推荐、歌单体系完全对接 `youtubei.js` 与 Google 账号体系。
+- 签名解密修复：在 Node.js 环境中为 `youtubei.js` 注入 `vm.runInNewContext` Evaluator，彻底解决 YouTube 音频解析 `No valid URL to decipher` 及签名错误。
+- 零反爬流式播放：实现全新的 `/api/audio` 代理协议（支持 `ytm:` ID），使用 `ANDROID` 客户端直接获取 128kbps/优质音频流，实现秒开且不触发 HTTP 403 封禁。
+- 真实歌单与库读取：支持直接读取 Google 登录账号下 YouTube Music 的个人收藏库 (`getLibrary`) 与真实播放列表，未登录或空库时平滑降级展示全球 Top 100 曲目。
+- 歌词系统原生对齐：全面支持通过 YouTube Music 原生接口 (`getLyrics`) 实时拉取歌曲完整歌词内容。
+- 残留清理收口：删除 server.js 中全部 QQ 音乐后端（搜索/播放/歌词/评论/歌单/登录约 900 行）与网易云死代码（QR 登录路由、VIP 归一化、播放限制分类器）；`NeteaseCloudMusicApi` 与 `spotify-web-api-node` 依赖移除。
+- Spotify 真实接入：新增 `/api/spotify/*` 后端（sp_dc 会话 → Web API 令牌，含 TOTP 校验与降级），支持账号画像、歌单、我喜欢的音乐、搜索、歌手主页；播放与歌词自动匹配 YouTube Music 音源（标题+歌手+时长打分）。
+- 评论统一 YouTube 源：`/api/song/comments` 与 `/api/spotify/song/comments` 改为拉取对应 YouTube 视频评论。
+- 前端彻底改名：provider 键 netease/qq → youtube/spotify（约 500 处，含 CSS 类、元素 id、IPC 通道、API 路径），本地历史数据中的旧 provider 值与 `qq:` 歌单前缀自动兼容映射。
+- 会话文件更名：`.qq-cookie` → `.spotify-cookie`，主进程与后端均带旧文件自动迁移。
+
 ## v1.1.1
 
 - P0 installer safety fix: installation now defaults to the first available non-C drive from `D:\Mineradio` through `Z:\Mineradio`; it falls back to `C:\Mineradio` only when no D-Z drive exists.

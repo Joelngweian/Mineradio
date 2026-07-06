@@ -17,6 +17,13 @@ win-unpacked/
 
 # User data and private state
 .cookie
+.google-cookie
+.google-cookie.bak
+.spotify-cookie
+.spotify-token
+.spotify-token.bak
+.spotify-oauth
+.spotify-oauth.bak
 .qq-cookie
 updates/
 backups/
@@ -25,6 +32,11 @@ backups/
 *.cache
 .env
 .env.*
+
+# Local index, caches, and Claude Code local state (not part of the project)
+.codegraph/
+yt-cache/
+.claude/settings.local.json
 
 # Local development noise
 .DS_Store

@@ -13,7 +13,7 @@
 
 - 确认 `package.json` 和 `package-lock.json` 版本号正确。
 - 确认 `mineradio.update.owner/repo` 指向正式仓库。
-- 确认 `.cookie`、`.qq-cookie`、`updates/`、`node_modules/`、旧 `dist/` 没有进入 git。
+- 确认 `.cookie`、`.spotify-cookie`、`updates/`、`node_modules/`、旧 `dist/` 没有进入 git。
 - 确认 README/SECURITY/CHANGELOG/Release 正文包含 `v1.0.10` 旧安装包隔离说明。
 - 运行语法检查：`git diff --check`、`node --check server.js`、前端内联脚本解析。
 - 运行 Git 跟踪风险残留检查，确认没有跟踪 `.exe/.dll/.scr/.bat/.cmd/.ps1/.vbs/.jse/.wsf/.hta/.xlsm` 等可执行/脚本残留。

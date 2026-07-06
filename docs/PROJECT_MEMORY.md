@@ -1,5 +1,25 @@
 # Mineradio Project Memory
 
+### 2026-07-04 - 网易云/QQ 底座彻底移除与 Spotify 真实接入
+
+- 用户要求：分析全部代码并把所有网易云/QQ 逻辑替换干净；Spotify 真实接入（账号/歌单/搜索走 Spotify Web API，播放匹配 YouTube Music 音源）；评论替换为 YouTube 评论；内部命名彻底改名。
+- 涉及文件：`server.js`、`desktop/main.js`、`desktop/preload.js`、`public/index.html`、`package.json`、README/PRIVACY/NOTICE/SECURITY/RELEASE、`.gitignore`。
+- 关键实现：
+  1. Spotify 会话：官方窗口捕获 `sp_dc` cookie → `open.spotify.com/get_access_token`（带 TOTP totpVer=5，失败自动降级无 TOTP 重试）→ Web API Bearer 令牌，缓存 30 分钟，401 自动重取。TOTP 秘钥为社区已知参数，Spotify 轮换后需更新 `spotifyTotpSecretBytes()`。
+  2. Spotify 播放/歌词/评论均无官方直链：`matchSpotifyTrackToYTM()` 按标题+歌手+时长打分匹配 YouTube Music 曲目（内存缓存 800 条），播放返回 `ytm:<videoId>` 走既有 /api/audio 代理。
+  3. 前端 provider 键 netease/qq → youtube/spotify 全量改名约 500 处；`songProviderKey()` 保留旧值 'qq'/'netease' 兼容映射，歌单 ID 前缀 'spotify:' 新写入、'qq:' 仍可解析（本地历史数据）。
+  4. IPC 通道改名：netease-music-*/qq-music-* → google-account-*/spotify-account-*（preload 方法 openGoogleAccountLogin/openSpotifyAccountLogin 等）。
+  5. 会话文件 `.qq-cookie` → `.spotify-cookie`，desktop/main.js 与 server.js 均自动迁移旧文件。
+- 禁止回退或改坏的点：不要恢复任何 /api/qq/* 或网易云 QR 登录路由；不要移除 songProviderKey 与歌单前缀的旧数据兼容分支；不要在 Node 端重置 Platform.load（见 2026-07-03 条目）。
+
+### 2026-07-03 - Metrolist YouTube Music Architecture & Node Evaluator Solution
+
+- User requirement: 彻底不再使用网易云音乐 (`NeteaseCloudMusicApi`) 和 QQ 音乐架构，全面转向 Metrolist 风格的 YouTube Music (Google 账号) 和 Spotify 账号体系。
+- Files: `server.js`, `package.json`.
+- Key Technical Solution: Node.js 环境下直接使用 `youtubei.js` 默认配置会报 `PlayerError: No valid URL to decipher`，原因在于缺少 JavaScript Evaluator 解析 YouTube 签名加密脚本。通过在 `server.js` 顶层注入 `Platform.shim.eval = async (data, env) => vm.runInNewContext(\`(function() { \${data.output} })()\`, env);`，完美解决了音频流链接解密及签名验证问题。
+- Audio Streaming Proxy: 为了防止前端直接获取 YouTube 音频 CDN URL 触发 403 Forbidden 或跨域拦截，`/api/audio` 代理了 `ytm:<id>` 流请求，通过 `yt.download(id, { client: 'ANDROID', type: 'audio' })` + `Readable.fromWeb(stream).pipe(res)` 直接向客户端传输稳定优质音源。
+- Do not regress: 不要在 Node 环境下直接重置 `Platform.load` 导致 `fetch` 被覆盖，不要将音频代理或搜索接口退回旧网易云或 QQ 音乐逻辑。
+
 ### 2026-06-25 - P0 Installer In-Place Repair Rule
 
 - User requirement: all users must receive the installer/uninstaller safety fix with zero risk to unrelated files.
@@ -380,3 +400,49 @@
 - 涉及文件：`docs/QQ_MUSIC_INTERFACE_NOTES.md`、`server.js`、`desktop/main.js`、`public/index.html`。
 - 关键参数/实现：区分网页账号态 `p_skey` 和播放票据 `qm_keyst`/`qqmusic_key`/`music_key`/`wxskey`；`/api/qq/login/status` 返回 `playbackKeyReady`；缺播放票据时 `104003` 归类为 `login_required`；昵称头像用 `ptnick_*` 和 `qlogo.cn` 兜底。
 - 禁止回退或改坏的点：不要再把 `p_skey` 当作完整 QQ 音乐播放授权；不要因为 QQ 资料接口 `code:1000` 就清空头像/昵称或标记未登录；修 QQ 播放前先读 `docs/QQ_MUSIC_INTERFACE_NOTES.md`。
+
+### 2026-06-29 - 日语及动漫歌曲专业歌词库资源与时间轴对齐记录
+
+- 用户提供/认可资源：用户推荐了两个优秀的日语及动漫歌曲歌词资源网站：`https://utaten.com/` (日本专业歌词库，含假名标识) 与 `https://kanogoma.com/` (Kanogoma 中日歌詞翻譯網，专注于动漫歌曲高精翻译)。
+- 涉及文件：`server.js`、`public/index.html`、`docs/PROJECT_MEMORY.md`。
+- 关键特性与差异：UtaTen 与 Kanogoma 均提供高质量的原文字幕与人工翻译，但属于非带时间轴（LRC/YRC timestamp）的纯文本展示网站；因此对于带有 3D 粒子同步渲染的 Mineradio，底层首选依赖网易云音乐 API 与 LrcLib 提供精确的时间轴打点，而将词库作为长期的交叉校验与翻译参考。
+- 视频音源与专辑 CD 音源的时间差表现：当播放 YouTube Music / Bilibili 等动漫 OP 视频音频（如 `【火影忍者OP4】GO!!!（中日字幕）【Flow】`）时，由于动漫 OP 视频前常有 0.5 秒 ~ 1.5 秒的视频赞助商黑屏或电视台静音前奏，其人声起唱时间晚于官方 CD 专辑纯音频；而后台智能匹配到的是 CD 标准版时间轴 LRC（如网易云 ID `725680`），从而会出现“歌词比歌唱稍微快大约 1 秒”的现象。这是视频音频剪辑延迟与专辑时间轴对齐的物理差异，非引擎卡顿。
+
+### 2026-07-03 - 吸收 Metrolist 歌词架构与多源瀑布流同步引擎
+
+- 用户认可/要求保留：吸收 Metrolist 项目（开源 Android 播放器）架构中的多源歌词互补设计，整合网易云精准 ID 直通 + 酷狗 KRC/LRC 逐字引擎 + LRCLIB 全球开放同步库。用户确认多源匹配效果很好，歌词精准匹配已解决，并移除了繁琐的手动歌词校准逻辑。
+- 涉及文件：`server.js`、`public/index.html`、`docs/PROJECT_MEMORY.md`。
+- 关键参数/实现：
+  1. `server.js` 的 `/api/lyric` 中建立**瀑布流多源检索**：若 URL 带网易云数字 ID，优先调用 `http://music.163.com/api/song/lyric?id=` 直通获取官方原配同步/YRC歌词；
+  2. 引入酷狗音乐 (`mobilecdn.kugou.com` / `m.kugou.com/app/i/krc.php`) 检索引擎，为中文翻唱、现场及冷门歌曲抓取高精度 KRC/LRC 时间轴；
+  3. 保留并优化 LRCLIB (`lrclib.net`) 全球同步歌词众包引擎作为英文与海外曲目兜底；
+  4. 前端移除了多余的手动歌词校准按键与偏移量计算，还给用户最简洁高级的 UI。
+- 禁止回退或改坏的点：不要删除网易云精准数字 ID 直通层；不要拆除酷狗与 LRCLIB 的多源瀑布流互补机制；保持界面整洁无需用户手动对齐歌词。
+
+### 2026-07-03 - NeteaseCloudMusicApi 依赖保护与底层防崩溃处理
+
+- 修复记录：在 `server.js` 头部将 `require('NeteaseCloudMusicApi')` 封装进 try-catch 保护机制，并补充默认 stub 回退函数。同时在 `package.json` 中正式将 `NeteaseCloudMusicApi` 纳入依赖并完成安装。
+- 涉及文件：`server.js`、`package.json`。
+- 关键特性：即使将来用户环境或打包后缺少 `NeteaseCloudMusicApi` 模块，`server.js` 也绝不会报错崩溃导致客户端启动失败 (`Cannot find module`)，确保服务对环境具备绝对弹性和稳定性。
+
+### 2026-07-04 - 修复登录账户显示错乱与全面打通真实 YouTube Music / Spotify 账户画像
+
+- 用户反馈与修复：用户反馈“这根本不是我的youtube music账户”，经排查原因有两个：
+  1. 过去 UI 界面上将原架构遗留的登录会话槽位（如 `netease`/`qq`）硬编码成了混杂标签，并且在未完成官方账户信息抓取前，硬编码生成了如 `网易云 SVIP`、`YouTube Music 会员` 及基于 cookie 首部切片的假昵称；
+  2. 底层 `server.js` 的 `getLoginInfo()` 未真正向 YouTube Music 内核发起账户资料检索。
+- 涉及文件：`server.js`、`public/index.html`。
+- 关键特性与实现：
+  1. 在 `server.js` 的 `getLoginInfo()` 中实现真实 YouTube Music 账户画像查询：利用 `Innertube` 实例调用 `yt.account.getInfo()` 解析 `AccountItem` 真实结构，精准提取当前谷歌账号的 `nickname`（例如账号真实姓名）、`email`（谷歌邮箱）、`avatar`（高清头像）与 `handle`（`@` handle），并附带 15 分钟内存防抖缓存；
+  2. 前端 `public/index.html` 全面重构登录态显示，彻底清退旧网易云及 QQ 音乐遗留文字与会员等级伪造，使个人主页弹窗精准显示正确的 YouTube Music 和 Spotify 会员身份与谷歌真实昵称及邮箱信息。
+- 禁止回退或改坏的点：不要在前端或后端硬编码假昵称或假会员信息；必须通过 `yt.account.getInfo()` 获取用户真实的 YouTube Music/Google 账号画像。
+
+### 2026-07-04 - 修复 YouTube Music 个人歌单库 (Library Playlists) 读取为空的问题
+
+- 用户反馈与修复：用户反馈“确实是有帐号了但是没有读取账号内的歌单”。
+- 根本原因：`server.js` 中的 `/api/user/playlists` 接口调用 `yt.music.getLibrary()` 后，旧代码期望顶层数据结构类型为 `GridShelf` 或 `MusicShelf`。然而最新的 YouTube Music API 返回的个人资料库容器结构为 `Grid`（或 `SectionList`），内部通过 `items` 存放每个 `MusicTwoRowItem`，导致旧代码跳过了所有分类解析，并降级成了内置默认歌单。
+- 涉及文件：`server.js`。
+- 关键实现：
+  1. 重构 `/api/user/playlists` 遍历逻辑：支持对 `lib.contents` 下各个分区的 `items`/`contents` 进行全面解析；
+  2. 智能过滤与属性提取：自动排除关注的艺人与频道（ID 以 `UC` 开头或副标题含 `Artist`/`艺人`），精准提取用户真实创建/收藏的歌单（如“车”、“战歌”、“歌”、“Liked Music”等）；
+  3. 自动从歌单副标题（如 `Playlist • 黄伟安 • 15 tracks`）匹配并解析实际歌曲数量 `trackCount` 与封面大图 `cover`。
+- 禁止回退或改坏的点：不要再硬编码限定 `GridShelf` 类型；对 `yt.music.getLibrary()` 返回的结构必须兼容 `Grid` 及 `items` 列表属性。

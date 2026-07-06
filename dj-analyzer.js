@@ -529,6 +529,7 @@ async function analyzePodcastDjRangeSamples(audioUrl, opts) {
       headers: {
         'User-Agent': opts.userAgent || DEFAULT_UA,
         'Referer': 'https://music.163.com/',
+        'Range': 'bytes=0-1048575',
       },
     });
     contentLength = Number(head.headers.get('content-length') || 0) || 0;
@@ -822,6 +823,7 @@ async function analyzePodcastDjStreamFull(audioUrl, opts) {
       headers: {
         'User-Agent': opts.userAgent || DEFAULT_UA,
         'Referer': 'https://music.163.com/',
+        'Range': opts.range || 'bytes=0-1048575',
       },
     });
     if (!resp.ok || !resp.body) throw new Error('Audio fetch failed: ' + resp.status);

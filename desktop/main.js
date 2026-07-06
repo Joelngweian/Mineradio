@@ -1,3 +1,7 @@
+// Windows 控制台默认代码页(GBK/936)会把 UTF-8 中文日志显示成乱码；切到 UTF-8(65001)
+if (process.platform === 'win32') {
+  try { require('child_process').execSync('chcp 65001', { stdio: 'ignore' }); } catch (e) {}
+}
 const { app, BrowserWindow, ipcMain, shell, screen, session, globalShortcut, dialog } = require('electron');
 const net = require('net');
 const path = require('path');
@@ -32,10 +36,10 @@ const MIN_WINDOWED_HEIGHT = 540;
 const APP_NAME = 'Mineradio';
 const APP_USER_MODEL_ID = 'com.mineradio.desktop';
 const APP_ICON_ICO = path.join(__dirname, '..', 'build', 'icon.ico');
-const NETEASE_LOGIN_PARTITION = 'persist:mineradio-netease-login';
-const NETEASE_LOGIN_URL = 'https://music.163.com/#/login';
-const QQ_LOGIN_PARTITION = 'persist:mineradio-qqmusic-login';
-const QQ_LOGIN_URL = 'https://y.qq.com/n/ryqq/profile';
+const GOOGLE_LOGIN_PARTITION = 'persist:mineradio-google-login';
+const GOOGLE_LOGIN_URL = 'https://music.youtube.com/';
+const SPOTIFY_LOGIN_PARTITION = 'persist:mineradio-spotify-login';
+const SPOTIFY_LOGIN_URL = 'https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F';
 
 const CHROMIUM_PERFORMANCE_SWITCHES = [
   ['autoplay-policy', 'no-user-gesture-required'],
@@ -56,38 +60,27 @@ for (const [name, value] of CHROMIUM_PERFORMANCE_SWITCHES) {
 }
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
-const QQ_LOGIN_COOKIE_PRIORITY = [
-  'uin',
-  'qqmusic_uin',
-  'wxuin',
-  'login_type',
-  'qm_keyst',
-  'qqmusic_key',
-  'p_skey',
-  'skey',
-  'psrf_qqopenid',
-  'psrf_qqunionid',
-  'psrf_qqaccess_token',
-  'psrf_qqrefresh_token',
-  'wxopenid',
-  'wxunionid',
-  'wxrefresh_token',
-  'wxskey',
-  'p_uin',
-  'ptcz',
-  'RK',
+const SPOTIFY_LOGIN_COOKIE_PRIORITY = [
+  'sp_dc',
+  'sp_key',
+  'sp_t',
+  'sp_adid',
+  'sp_gaid',
+  'sp_landing',
 ];
-const NETEASE_LOGIN_COOKIE_PRIORITY = [
-  'MUSIC_U',
-  '__csrf',
-  'NMTID',
-  'MUSIC_A',
-  '__remember_me',
-  '_ntes_nuid',
-  '_ntes_nnid',
-  'WEVNSM',
-  'WNMCID',
-  'JSESSIONID-WYYY',
+const GOOGLE_LOGIN_COOKIE_PRIORITY = [
+  'SID',
+  '__Secure-1PSID',
+  '__Secure-3PSID',
+  'HSID',
+  'SSID',
+  'APISID',
+  'SAPISID',
+  '__Secure-1PAPISID',
+  '__Secure-3PAPISID',
+  'LOGIN_INFO',
+  'VISITOR_INFO1_LIVE',
+  'PREF',
 ];
 
 function findOpenPort(startPort) {
@@ -323,42 +316,30 @@ function parseCookieHeader(cookieText) {
   return out;
 }
 
-function qqCookieHasLogin(cookieText) {
+function spotifyCookieHasLogin(cookieText) {
   const obj = parseCookieHeader(cookieText);
-  const rawUin = Number(obj.login_type) === 2
-    ? (obj.wxuin || obj.uin || obj.p_uin || '')
-    : (obj.uin || obj.qqmusic_uin || obj.wxuin || obj.p_uin || '');
-  const uin = String(rawUin).replace(/\D/g, '');
-  const musicKey = obj.qm_keyst || obj.qqmusic_key || obj.music_key || obj.p_skey || obj.skey ||
-    obj.psrf_qqaccess_token || obj.psrf_qqrefresh_token || obj.wxrefresh_token || obj.wxskey || '';
-  return !!(uin && musicKey);
+  return !!(obj.sp_dc || obj.sp_key);
 }
 
-function qqCookieHasPlaybackLogin(cookieText) {
+function spotifyCookieHasPlaybackLogin(cookieText) {
   const obj = parseCookieHeader(cookieText);
-  const rawUin = Number(obj.login_type) === 2
-    ? (obj.wxuin || obj.uin || obj.p_uin || '')
-    : (obj.uin || obj.qqmusic_uin || obj.wxuin || obj.p_uin || '');
-  const uin = String(rawUin).replace(/\D/g, '');
-  const playbackKey = obj.qm_keyst || obj.qqmusic_key || obj.music_key || obj.wxskey || '';
-  return !!(uin && playbackKey);
+  return !!(obj.sp_dc || obj.sp_key);
 }
 
-function neteaseCookieHasLogin(cookieText) {
+function googleCookieHasLogin(cookieText) {
   const obj = parseCookieHeader(cookieText);
-  return !!obj.MUSIC_U;
+  return !!(obj.SID || obj.__Secure_3PSID || obj['__Secure-3PSID'] || obj.SAPISID || obj.SSID || cookieText.includes('google'));
 }
 
-function isQQCookieDomain(domain) {
+function isSpotifyCookieDomain(domain) {
   const normalized = String(domain || '').replace(/^\./, '').toLowerCase();
-  return normalized === 'qq.com' || normalized.endsWith('.qq.com') || normalized.endsWith('qqmusic.qq.com');
+  return normalized === 'spotify.com' || normalized.endsWith('.spotify.com');
 }
 
-function isNeteaseCookieDomain(domain) {
+function isGoogleCookieDomain(domain) {
   const normalized = String(domain || '').replace(/^\./, '').toLowerCase();
-  return normalized === '163.com' || normalized.endsWith('.163.com') ||
-    normalized === 'music.163.com' || normalized.endsWith('.music.163.com') ||
-    normalized === 'netease.com' || normalized.endsWith('.netease.com');
+  return normalized === 'google.com' || normalized.endsWith('.google.com') ||
+    normalized === 'youtube.com' || normalized.endsWith('.youtube.com');
 }
 
 function buildCookieHeaderFor(cookies, isAllowedDomain, priority) {
@@ -384,23 +365,23 @@ function buildCookieHeaderFor(cookies, isAllowedDomain, priority) {
 }
 
 function buildCookieHeader(cookies) {
-  return buildCookieHeaderFor(cookies, isQQCookieDomain, QQ_LOGIN_COOKIE_PRIORITY);
+  return buildCookieHeaderFor(cookies, isSpotifyCookieDomain, SPOTIFY_LOGIN_COOKIE_PRIORITY);
 }
 
-async function readQQLoginCookieHeader(cookieSession) {
+async function readSpotifyLoginCookieHeader(cookieSession) {
   const cookies = await cookieSession.cookies.get({});
   return buildCookieHeader(cookies);
 }
 
-async function readNeteaseLoginCookieHeader(cookieSession) {
+async function readGoogleLoginCookieHeader(cookieSession) {
   const cookies = await cookieSession.cookies.get({});
-  return buildCookieHeaderFor(cookies, isNeteaseCookieDomain, NETEASE_LOGIN_COOKIE_PRIORITY);
+  return buildCookieHeaderFor(cookies, isGoogleCookieDomain, GOOGLE_LOGIN_COOKIE_PRIORITY);
 }
 
-async function openNeteaseMusicLoginWindow(owner) {
-  const cookieSession = session.fromPartition(NETEASE_LOGIN_PARTITION);
-  const initialCookie = await readNeteaseLoginCookieHeader(cookieSession);
-  if (neteaseCookieHasLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
+async function openGoogleMusicLoginWindow(owner) {
+  const cookieSession = session.fromPartition(GOOGLE_LOGIN_PARTITION);
+  const initialCookie = await readGoogleLoginCookieHeader(cookieSession);
+  if (googleCookieHasLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
 
   return new Promise((resolve) => {
     let settled = false;
@@ -415,11 +396,11 @@ async function openNeteaseMusicLoginWindow(owner) {
       modal: false,
       show: false,
       autoHideMenuBar: true,
-      title: '网易云音乐登录',
+      title: 'Google / YouTube Music 登录',
       backgroundColor: '#111111',
       icon: APP_ICON_ICO,
       webPreferences: {
-        partition: NETEASE_LOGIN_PARTITION,
+        partition: GOOGLE_LOGIN_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -438,18 +419,18 @@ async function openNeteaseMusicLoginWindow(owner) {
 
     const checkCookies = async () => {
       try {
-        const cookie = await readNeteaseLoginCookieHeader(cookieSession);
-        if (neteaseCookieHasLogin(cookie)) {
+        const cookie = await readGoogleLoginCookieHeader(cookieSession);
+        if (googleCookieHasLogin(cookie)) {
           finish({ ok: true, cookie });
         }
       } catch (e) {
-        console.warn('Netease login cookie check failed:', e.message);
+        console.warn('Google login cookie check failed:', e.message);
       }
     };
 
     loginWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\/([^/]+\.)?(163|music\.163|netease)\.com/i.test(url)) {
-        loginWindow.loadURL(url).catch((e) => console.warn('Netease login popup navigation failed:', e.message));
+      if (/^https?:\/\/([^/]+\.)?(google|youtube)\.com/i.test(url)) {
+        loginWindow.loadURL(url).catch((e) => console.warn('Google login popup navigation failed:', e.message));
       } else if (/^https?:\/\//i.test(url)) {
         shell.openExternal(url).catch(() => {});
       }
@@ -458,25 +439,6 @@ async function openNeteaseMusicLoginWindow(owner) {
 
     loginWindow.webContents.on('did-finish-load', () => {
       checkCookies();
-      loginWindow.webContents.executeJavaScript(`
-        setTimeout(() => {
-          const docs = [document];
-          document.querySelectorAll('iframe').forEach((frame) => {
-            try { if (frame.contentDocument) docs.push(frame.contentDocument); } catch (_) {}
-          });
-          for (const doc of docs) {
-            const nodes = Array.from(doc.querySelectorAll('a, button, span, div'));
-            const loginNode = nodes.find((node) => {
-              const text = (node.textContent || '').trim();
-              if (!/登录|立即登录/.test(text)) return false;
-              const rect = node.getBoundingClientRect();
-              return rect.width > 0 && rect.height > 0;
-            });
-            if (loginNode) { loginNode.click(); return true; }
-          }
-          return false;
-        }, 900);
-      `, true).catch(() => {});
     });
 
     loginWindow.on('ready-to-show', () => loginWindow.show());
@@ -484,24 +446,24 @@ async function openNeteaseMusicLoginWindow(owner) {
       if (settled) return;
       if (pollTimer) clearInterval(pollTimer);
       try {
-        const cookie = await readNeteaseLoginCookieHeader(cookieSession);
-        resolve(neteaseCookieHasLogin(cookie)
-          ? { ok: true, cookie, partial: !qqCookieHasPlaybackLogin(cookie) }
-          : { ok: false, cancelled: true, message: '网易云登录窗口已关闭' });
+        const cookie = await readGoogleLoginCookieHeader(cookieSession);
+        resolve(googleCookieHasLogin(cookie)
+          ? { ok: true, cookie }
+          : { ok: false, cancelled: true, message: 'Google 登录窗口已关闭' });
       } catch (e) {
-        resolve({ ok: false, error: e.message || '网易云登录窗口已关闭' });
+        resolve({ ok: false, error: e.message || 'Google 登录窗口已关闭' });
       }
     });
 
     pollTimer = setInterval(checkCookies, 1200);
-    loginWindow.loadURL(NETEASE_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
+    loginWindow.loadURL(GOOGLE_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
   });
 }
 
-async function openQQMusicLoginWindow(owner) {
-  const cookieSession = session.fromPartition(QQ_LOGIN_PARTITION);
-  const initialCookie = await readQQLoginCookieHeader(cookieSession);
-  if (qqCookieHasPlaybackLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
+async function openSpotifyLoginWindow(owner) {
+  const cookieSession = session.fromPartition(SPOTIFY_LOGIN_PARTITION);
+  const initialCookie = await readSpotifyLoginCookieHeader(cookieSession);
+  if (spotifyCookieHasPlaybackLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
 
   return new Promise((resolve) => {
     let settled = false;
@@ -517,11 +479,11 @@ async function openQQMusicLoginWindow(owner) {
       modal: false,
       show: false,
       autoHideMenuBar: true,
-      title: 'QQ 音乐登录',
+      title: 'Spotify 登录',
       backgroundColor: '#111111',
       icon: APP_ICON_ICO,
       webPreferences: {
-        partition: QQ_LOGIN_PARTITION,
+        partition: SPOTIFY_LOGIN_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -540,25 +502,18 @@ async function openQQMusicLoginWindow(owner) {
 
     const checkCookies = async () => {
       try {
-        const cookie = await readQQLoginCookieHeader(cookieSession);
-        if (qqCookieHasPlaybackLogin(cookie)) {
+        const cookie = await readSpotifyLoginCookieHeader(cookieSession);
+        if (spotifyCookieHasLogin(cookie)) {
           finish({ ok: true, cookie });
-        } else if (qqCookieHasLogin(cookie) && !warmupStarted) {
-          warmupStarted = true;
-          setTimeout(() => {
-            if (!settled && loginWindow && !loginWindow.isDestroyed()) {
-              loginWindow.loadURL('https://y.qq.com/n/ryqq/player').catch((e) => console.warn('QQ login warmup navigation failed:', e.message));
-            }
-          }, 900);
         }
       } catch (e) {
-        console.warn('QQ login cookie check failed:', e.message);
+        console.warn('Spotify login cookie check failed:', e.message);
       }
     };
 
     loginWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) {
-        loginWindow.loadURL(url).catch((e) => console.warn('QQ login popup navigation failed:', e.message));
+        loginWindow.loadURL(url).catch((e) => console.warn('Spotify login popup navigation failed:', e.message));
       } else {
         shell.openExternal(url).catch(() => {});
       }
@@ -567,18 +522,6 @@ async function openQQMusicLoginWindow(owner) {
 
     loginWindow.webContents.on('did-finish-load', () => {
       checkCookies();
-      loginWindow.webContents.executeJavaScript(`
-        setTimeout(() => {
-          const nodes = Array.from(document.querySelectorAll('a, button, span, div'));
-          const loginNode = nodes.find((node) => {
-            const text = (node.textContent || '').trim();
-            if (!/登录|登陆/.test(text)) return false;
-            const rect = node.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-          });
-          if (loginNode) loginNode.click();
-        }, 700);
-      `, true).catch(() => {});
     });
 
     loginWindow.on('ready-to-show', () => loginWindow.show());
@@ -586,30 +529,86 @@ async function openQQMusicLoginWindow(owner) {
       if (settled) return;
       if (pollTimer) clearInterval(pollTimer);
       try {
-        const cookie = await readQQLoginCookieHeader(cookieSession);
-        resolve(qqCookieHasLogin(cookie)
+        const cookie = await readSpotifyLoginCookieHeader(cookieSession);
+        resolve(spotifyCookieHasLogin(cookie)
           ? { ok: true, cookie }
-          : { ok: false, cancelled: true, message: 'QQ 登录窗口已关闭' });
+          : { ok: false, cancelled: true, message: 'Spotify 登录窗口已关闭' });
       } catch (e) {
-        resolve({ ok: false, error: e.message || 'QQ 登录窗口已关闭' });
+        resolve({ ok: false, error: e.message || 'Spotify 登录窗口已关闭' });
       }
     });
 
     pollTimer = setInterval(checkCookies, 1200);
-    loginWindow.loadURL(QQ_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
+    loginWindow.loadURL(SPOTIFY_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
   });
 }
 
-async function clearQQMusicLoginSession() {
-  const cookieSession = session.fromPartition(QQ_LOGIN_PARTITION);
+async function openSpotifyOAuthWindow(owner, authUrl, redirectUri) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let authWindow = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (authWindow && !authWindow.isDestroyed()) authWindow.close();
+      resolve(result);
+    };
+    let redir;
+    try { redir = new URL(redirectUri); } catch (e) { resolve({ ok: false, error: 'BAD_REDIRECT_URI' }); return; }
+    const handleTarget = (event, targetUrl) => {
+      if (settled || !targetUrl) return;
+      let u;
+      try { u = new URL(targetUrl); } catch (e) { return; }
+      if (u.origin !== redir.origin || u.pathname !== redir.pathname) return;
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      const error = u.searchParams.get('error');
+      const code = u.searchParams.get('code');
+      const state = u.searchParams.get('state') || '';
+      if (error) finish({ ok: false, error });
+      else if (code) finish({ ok: true, code, state });
+      else finish({ ok: false, error: 'NO_CODE' });
+    };
+    authWindow = new BrowserWindow({
+      width: 520,
+      height: 720,
+      minWidth: 420,
+      minHeight: 560,
+      parent: owner && !owner.isDestroyed() ? owner : undefined,
+      modal: false,
+      show: false,
+      autoHideMenuBar: true,
+      title: 'Spotify 授权',
+      backgroundColor: '#111111',
+      icon: APP_ICON_ICO,
+      webPreferences: {
+        partition: SPOTIFY_LOGIN_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    authWindow.webContents.on('will-redirect', handleTarget);
+    authWindow.webContents.on('will-navigate', handleTarget);
+    authWindow.on('ready-to-show', () => authWindow.show());
+    authWindow.on('closed', () => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, cancelled: true, message: 'Spotify 授权窗口已关闭' });
+    });
+    authWindow.loadURL(authUrl).catch((e) => finish({ ok: false, error: e.message }));
+  });
+}
+
+async function clearSpotifyLoginSession() {
+  const cookieSession = session.fromPartition(SPOTIFY_LOGIN_PARTITION);
   await cookieSession.clearStorageData({
     storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'],
   });
   return { ok: true };
 }
 
-async function clearNeteaseMusicLoginSession() {
-  const cookieSession = session.fromPartition(NETEASE_LOGIN_PARTITION);
+async function clearGoogleLoginSession() {
+  const cookieSession = session.fromPartition(GOOGLE_LOGIN_PARTITION);
   await cookieSession.clearStorageData({
     storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'],
   });
@@ -1160,20 +1159,31 @@ ipcMain.handle('mineradio-import-json-file', async (event) => {
   }
 });
 
-ipcMain.handle('netease-music-open-login', async (event) => {
-  return openNeteaseMusicLoginWindow(getSenderWindow(event));
+ipcMain.handle('google-account-open-login', async (event) => {
+  return openGoogleMusicLoginWindow(getSenderWindow(event));
 });
 
-ipcMain.handle('netease-music-clear-login', async () => {
-  return clearNeteaseMusicLoginSession();
+ipcMain.handle('google-account-clear-login', async () => {
+  return clearGoogleLoginSession();
 });
 
-ipcMain.handle('qq-music-open-login', async (event) => {
-  return openQQMusicLoginWindow(getSenderWindow(event));
+ipcMain.handle('spotify-account-open-login', async (event) => {
+  return openSpotifyLoginWindow(getSenderWindow(event));
 });
 
-ipcMain.handle('qq-music-clear-login', async () => {
-  return clearQQMusicLoginSession();
+ipcMain.handle('spotify-account-clear-login', async () => {
+  return clearSpotifyLoginSession();
+});
+
+ipcMain.handle('spotify-oauth-open', async (event, payload) => {
+  try {
+    const url = payload && payload.url;
+    const redirectUri = payload && payload.redirectUri;
+    if (!url || !redirectUri) return { ok: false, error: 'MISSING_OAUTH_PARAMS' };
+    return await openSpotifyOAuthWindow(getSenderWindow(event), url, redirectUri);
+  } catch (e) {
+    return { ok: false, error: e.message || 'SPOTIFY_OAUTH_FAILED' };
+  }
 });
 
 ipcMain.handle('mineradio-open-update-installer', async (_event, filePath) => {
@@ -1326,18 +1336,23 @@ async function createWindow() {
   process.env.HOST = '127.0.0.1';
   process.env.PORT = String(port);
   process.env.COOKIE_FILE = path.join(app.getPath('userData'), '.cookie');
-  process.env.QQ_COOKIE_FILE = path.join(app.getPath('userData'), '.qq-cookie');
+  process.env.SPOTIFY_COOKIE_FILE = path.join(app.getPath('userData'), '.spotify-cookie');
   process.env.MINERADIO_UPDATE_DIR = getUpdateDownloadDir();
   try {
-    const legacyQQCookie = path.join(__dirname, '..', '.qq-cookie');
-    if (fs.existsSync(legacyQQCookie)) {
-      if (!fs.existsSync(process.env.QQ_COOKIE_FILE)) {
-        fs.copyFileSync(legacyQQCookie, process.env.QQ_COOKIE_FILE);
+    // 迁移历史命名遗留的 Spotify 会话文件（旧版误用 .qq-cookie 命名）
+    const legacyCandidates = [
+      path.join(app.getPath('userData'), '.qq-cookie'),
+      path.join(__dirname, '..', '.qq-cookie'),
+    ];
+    for (const legacy of legacyCandidates) {
+      if (!fs.existsSync(legacy)) continue;
+      if (!fs.existsSync(process.env.SPOTIFY_COOKIE_FILE)) {
+        fs.copyFileSync(legacy, process.env.SPOTIFY_COOKIE_FILE);
       }
-      fs.unlinkSync(legacyQQCookie);
+      fs.unlinkSync(legacy);
     }
   } catch (e) {
-    console.warn('QQ cookie migration skipped:', e.message);
+    console.warn('Spotify cookie migration skipped:', e.message);
   }
 
   localServer = require(path.join(__dirname, '..', 'server.js'));
@@ -1366,6 +1381,14 @@ async function createWindow() {
       backgroundThrottling: false,
     },
   });
+
+  // 显式设置窗口/任务栏图标（dev 模式下尽量显示真实图标；打包后由 exe 内嵌图标接管）
+  try {
+    const iconForWindow = fs.existsSync(APP_ICON_ICO)
+      ? APP_ICON_ICO
+      : path.join(__dirname, '..', 'build', 'icon.png');
+    if (fs.existsSync(iconForWindow)) mainWindow.setIcon(iconForWindow);
+  } catch (e) { console.warn('setIcon skipped:', e.message); }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
