@@ -828,7 +828,7 @@ while ($true) {
     [Console]::Out.Flush()
   }
   $prev = $down
-  Start-Sleep -Milliseconds 24
+  Start-Sleep -Milliseconds 50
 }
 `;
   try {

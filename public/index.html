@@ -3798,7 +3798,24 @@ function maybeTrimRuntimeCaches(now) {
   if (now - runtimePerfState.lastCacheTrimAt < gap) return;
   trimRuntimeCaches(deep ? (isBackgroundReleaseMode() ? 'release-frame' : 'deep-frame') : 'active-frame', deep);
 }
+function updateBackgroundVideoPower() {
+  // 隐藏/最小化 或 离开首页时暂停背景视频，避免后台白白解码烧 CPU/GPU/电
+  var deep = isDeepBackgroundMode();
+  var custom = document.getElementById('custom-bg-video');
+  if (custom) {
+    var wantCustom = !deep && !!custom.getAttribute('src');
+    if (wantCustom) { if (custom.paused) { var pc = custom.play && custom.play(); if (pc && pc.catch) pc.catch(function(){}); } }
+    else if (!custom.paused) { try { custom.pause(); } catch (e) {} }
+  }
+  var hero = document.getElementById('home-hero-bg-video');
+  if (hero) {
+    var wantHero = !deep && (typeof emptyHomeActive === 'undefined' || emptyHomeActive) && !!hero.getAttribute('src');
+    if (wantHero) { if (hero.paused) { var ph = hero.play && hero.play(); if (ph && ph.catch) ph.catch(function(){}); } }
+    else if (!hero.paused) { try { hero.pause(); } catch (e) {} }
+  }
+}
 function applyRendererPowerMode() {
+  updateBackgroundVideoPower();
   if (typeof renderer === 'undefined' || !renderer) return;
   var deep = isDeepBackgroundMode();
   var width = deep ? 4 : Math.max(1, innerWidth);
@@ -15644,8 +15661,8 @@ function updateHomeNowClock() {
 function ensureHomeNowClock() {
   if (homeNowClockTimer) return;
   homeNowClockTimer = setInterval(function () {
-    if (!emptyHomeActive || document.hidden) return;
-    if (!document.getElementById('home-now-clock')) return;
+    if (!emptyHomeActive) { clearInterval(homeNowClockTimer); homeNowClockTimer = null; return; }
+    if (document.hidden || !document.getElementById('home-now-clock')) return;
     updateHomeNowClock();
   }, 1000);
 }
@@ -15706,8 +15723,7 @@ function applyHomeHeroBg() {
     if (video.getAttribute('src') !== bg.src) video.src = bg.src;
     video.muted = true;
     video.loop = true;
-    var pr = video.play && video.play();
-    if (pr && pr.catch) pr.catch(function(){});
+    updateBackgroundVideoPower();
   } else {
     layer.classList.remove('video');
     if (video) { try { video.pause(); } catch (e) {} video.removeAttribute('src'); }
@@ -16323,6 +16339,7 @@ function updateEmptyHomeVisibility(opts) {
   var show = shouldShowEmptyHome();
   emptyHomeActive = show;
   document.body.classList.toggle('empty-home-active', show);
+  updateBackgroundVideoPower();
   if (!show) setHomeControlsLocked(false);
   if (show) activateHomeWallpaperPreview();
   else deactivateHomeWallpaperPreview(false);
@@ -20455,10 +20472,11 @@ progressBar.addEventListener('pointerup', endProgressDrag);
 progressBar.addEventListener('pointercancel', endProgressDrag);
 progressBar.addEventListener('lostpointercapture', function(){ progressDragState.active = false; progressBar.classList.remove('is-dragging'); });
 setInterval(function(){
-  if (!audio) { updatePlaybackProgressUi(); return; }
+  if (!audio) { if (!document.hidden) updatePlaybackProgressUi(); return; }
   updateListenStatsTick(false);
+  if (document.hidden) return;
   updatePlaybackProgressUi();
-  if (audio.currentTime) updateLyricsHighlight();
+  if (playing && audio.currentTime) updateLyricsHighlight();
 }, 200);
 
 // ============================================================
