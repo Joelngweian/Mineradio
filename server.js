@@ -1531,6 +1531,27 @@ function extractHomeFeedSongs(feed, limit) {
   return out;
 }
 
+// 「每日推荐」按当天本地日期做种子洗牌：同一天固定、每天不同（真·每日，而非固定取前 N 首）
+function todayDateSeed() {
+  const d = new Date();
+  return (d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()) >>> 0;
+}
+function seededRandom(seed) {
+  let s = (seed >>> 0) || 1;
+  return function () {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+function seededShuffle(list, seed) {
+  const a = Array.isArray(list) ? list.slice() : [];
+  const rnd = seededRandom(seed);
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    const t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
 async function handleDiscoverHome() {
   const info = await getLoginInfo();
   const loggedIn = !!(info && info.loggedIn);
@@ -1547,11 +1568,12 @@ async function handleDiscoverHome() {
       const yt = await getYTMusic();
       if (yt && yt.session && yt.session.logged_in) {
         const feed = await yt.music.getHomeFeed();
-        const songs = extractHomeFeedSongs(feed, 24);
+        const songs = extractHomeFeedSongs(feed, 60);
         if (songs.length) {
-          dailySongs = songs.slice(0, 12);
+          // 从更大的池子里按当天日期洗牌取 12 首 → 每天不同、当天稳定
+          dailySongs = seededShuffle(songs, todayDateSeed()).slice(0, 12);
           personalized = true;
-          console.log('[DiscoverHome] 使用真实个性化推荐，', dailySongs.length, '首');
+          console.log('[DiscoverHome] 使用真实个性化推荐（每日种子洗牌），池', songs.length, '取', dailySongs.length, '首');
         }
       }
     } catch (e) {
@@ -1563,7 +1585,9 @@ async function handleDiscoverHome() {
     try {
       const yt = await getYTMusic();
       const pl = await yt.music.getPlaylist('VLPL4fGSI1pDJn6puJdseH2Rt9sMvt9E2M4i');
-      dailySongs = (pl.items || []).slice(0, 12).map(mapYTMItem).filter(Boolean);
+      const pool = (pl.items || []).map(mapYTMItem).filter(Boolean);
+      // 回退榜单也按当天日期洗牌取 12 首，避免每次一模一样
+      dailySongs = seededShuffle(pool, todayDateSeed()).slice(0, 12);
     } catch(e) {
       console.warn('[DiscoverHome YTM]', e.message);
     }

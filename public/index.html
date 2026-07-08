@@ -86,6 +86,7 @@ body.desktop-shell.desktop-fullscreen #top-right{top:24px}
 /* ---------- 背景 ---------- */
 #custom-bg{position:fixed;inset:0;z-index:0;background:var(--custom-bg-color,#000);overflow:hidden;transition:background .35s ease}
 #custom-bg-video{position:absolute;inset:-1px;width:calc(100% + 2px);height:calc(100% + 2px);object-fit:cover;opacity:var(--custom-bg-video-opacity,0);filter:none;transform:scale(1.002);transition:opacity .35s ease;pointer-events:none;background:#000}
+#custom-bg-fx{position:absolute;inset:-1px;z-index:5;background-size:cover;background-position:center;opacity:0;transform:none;pointer-events:none;will-change:opacity,transform}
 #custom-bg::before{content:'';position:absolute;inset:-1px;background-image:var(--custom-bg-image,none);background-size:cover;background-position:center;opacity:var(--custom-bg-image-opacity,0);filter:none;transform:scale(1.002);transition:opacity .35s ease,background-image .35s ease;pointer-events:none}
 #custom-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.06),rgba(0,0,0,.16));opacity:var(--custom-bg-overlay-opacity,0);pointer-events:none}
 body.custom-background-override #custom-bg::after{background:linear-gradient(180deg,rgba(0,0,0,.018),rgba(0,0,0,.045))}
@@ -284,6 +285,18 @@ body.home-wallpaper-preview #canvas-container{filter:none}
 .home-now-resume-play{width:38px;height:38px;flex-shrink:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--home-accent) 44%,rgba(255,255,255,.16));background:color-mix(in srgb,var(--home-accent) 16%,rgba(255,255,255,.05));display:flex;align-items:center;justify-content:center;color:#fff}
 .home-now-resume-play svg{width:16px;height:16px;margin-left:2px}
 .home-now-inner .home-console-chip{align-self:flex-start}
+.home-hero-bg{position:absolute;inset:0;border-radius:inherit;background-size:cover;background-position:center;opacity:0;transition:opacity .45s ease;z-index:0;pointer-events:none}
+.home-hero-bg.on{opacity:1}
+#home-hero-bg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;pointer-events:none}
+.home-hero-bg.video #home-hero-bg-video{opacity:1}
+.home-hero-bg::after{content:'';position:absolute;inset:0;border-radius:inherit;background:linear-gradient(120deg,rgba(6,8,12,.74),rgba(6,8,12,.40) 52%,rgba(6,8,12,.68));z-index:2}
+.home-now-top-right{display:flex;align-items:center;gap:10px;position:relative}
+.home-now-bg-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:rgba(255,255,255,.7);cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+.home-now-bg-btn:hover{background:color-mix(in srgb,var(--home-accent) 14%,rgba(255,255,255,.08));color:#fff;border-color:color-mix(in srgb,var(--home-accent) 40%,rgba(255,255,255,.14))}
+.home-now-bg-menu{position:absolute;top:32px;right:0;z-index:20;display:none;flex-direction:column;min-width:152px;padding:6px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(16,18,24,.97);box-shadow:0 18px 44px rgba(0,0,0,.5)}
+.home-now-bg-menu.open{display:flex}
+.home-now-bg-menu button{text-align:left;padding:8px 10px;border:none;background:none;color:rgba(255,255,255,.82);font-family:inherit;font-size:12px;border-radius:8px;cursor:pointer}
+.home-now-bg-menu button:hover{background:rgba(255,255,255,.08);color:#fff}
 @media (prefers-reduced-motion:reduce){.home-now-eq i{animation:none;transform:scaleY(.6)}}
 .home-visual{grid-column:2;grid-row:2 / span 2;position:relative;align-self:center;justify-self:end;width:100%;max-width:300px;height:74px;margin-top:0;pointer-events:none;filter:drop-shadow(0 18px 34px rgba(0,0,0,.28))}
 .home-visual.generated .home-sleeve,.home-visual.generated .home-disc{display:none}
@@ -335,7 +348,17 @@ body.empty-home-active .home-visual{animation:home-visual-drift 8.8s ease-in-out
 .home-card-art{position:absolute;z-index:1;right:13px;bottom:13px;width:108px;height:108px;border-radius:24px;background:linear-gradient(135deg,color-mix(in srgb,var(--tone-a) 78%,#14141a),color-mix(in srgb,var(--tone-b) 68%,#09090d));background-size:cover;background-position:center;box-shadow:0 18px 50px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.16);transform:rotate(3deg);overflow:hidden}
 .home-card-art:not(.has-cover)::before{content:'';position:absolute;inset:18px;border-radius:50%;background:repeating-radial-gradient(circle,rgba(255,255,255,.16) 0 1px,transparent 1px 8px),conic-gradient(from 180deg,var(--tone-a),var(--tone-b),var(--tone-c),var(--tone-a));box-shadow:inset 0 0 0 14px rgba(5,5,8,.44),0 12px 28px rgba(0,0,0,.26)}
 .home-card-art::after{content:'';position:absolute;inset:0;background:linear-gradient(145deg,rgba(255,255,255,.12),transparent 42%,rgba(0,0,0,.28));pointer-events:none}
-.home-rail{align-self:stretch;min-height:0;display:grid;grid-template-rows:auto 1fr;gap:12px}
+.home-rail{align-self:stretch;min-height:0;display:flex;flex-direction:column;gap:14px;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none}
+.home-rail::-webkit-scrollbar{width:0;height:0;display:none}
+.home-rail-block{display:flex;flex-direction:column;gap:10px}
+.home-pl-row{display:flex;gap:10px;overflow-x:auto;overflow-y:hidden;padding-bottom:4px;scrollbar-width:none;-ms-overflow-style:none}
+.home-pl-row::-webkit-scrollbar{width:0;height:0;display:none}
+.home-pl-card{flex:0 0 auto;width:118px;border:1px solid color-mix(in srgb,var(--home-accent) 10%,rgba(255,255,255,.08));border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.06),rgba(255,255,255,.025));padding:8px;color:#fff;text-align:left;font-family:inherit;cursor:pointer;transition:transform .18s,border-color .18s,box-shadow .18s}
+.home-pl-card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--home-accent) 40%,rgba(255,255,255,.16));box-shadow:0 16px 40px rgba(0,0,0,.3)}
+.home-pl-cover{width:100%;aspect-ratio:1;border-radius:12px;background:linear-gradient(135deg,#2a3f7a,#6a48b0);background-size:cover;background-position:center;margin-bottom:7px;box-shadow:0 10px 24px rgba(0,0,0,.28)}
+.home-pl-name{font-size:11.5px;font-weight:680;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-pl-sub{font-size:10px;color:rgba(255,255,255,.44);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-pl-empty{color:rgba(255,255,255,.4);font-size:12px;padding:14px 4px}
 .home-tile-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;min-height:0}
 .home-tile{--tone-a:#00f5d4;--tone-b:#2442ff;--tone-c:#f8f4ee;position:relative;min-width:0;min-height:166px;border:1px solid color-mix(in srgb,var(--home-accent) 9%,rgba(255,255,255,.075));border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.060),rgba(255,255,255,.025));box-shadow:0 16px 50px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.052);backdrop-filter:blur(20px) saturate(1.10);-webkit-backdrop-filter:blur(20px) saturate(1.10);padding:10px;color:#fff;text-align:left;font-family:inherit;cursor:pointer;transition:transform .2s,border-color .2s,background .2s,box-shadow .2s;overflow:hidden}
 .home-tile[data-home-tone="search"],.home-tile[data-home-tone="playlist"]{--tone-a:#9db8cf;--tone-b:#00f5d4;--tone-c:#2442ff}
@@ -853,6 +876,7 @@ body.login-guide-active #login-guide-canvas{opacity:1}
 .we-picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;max-height:52vh;overflow-y:auto;padding:4px 2px 8px}
 .we-item{display:flex;flex-direction:column;gap:6px;padding:0;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.03);cursor:pointer;overflow:hidden;transition:border-color .2s,transform .2s,box-shadow .2s;font-family:inherit;text-align:left}
 .we-item:hover{transform:translateY(-2px);border-color:rgba(var(--fc-accent-rgb),.5);box-shadow:0 12px 30px rgba(0,0,0,.32)}
+.we-item.selected{border-color:rgba(var(--fc-accent-rgb),.95);box-shadow:0 0 0 2px rgba(var(--fc-accent-rgb),.8) inset,0 12px 30px rgba(0,0,0,.34)}
 .we-thumb{position:relative;width:100%;aspect-ratio:16/10;background:rgba(0,0,0,.35);overflow:hidden}
 .we-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .we-thumb-empty{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:26px;opacity:.5}
@@ -1931,7 +1955,7 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
 <div id="fullscreen-diy-zone" aria-hidden="true">
   <button id="fullscreen-diy-btn" class="desktop-mode-btn" type="button" onclick="toggleDiyMode()" title="DIY" aria-label="DIY" aria-pressed="false">DIY</button>
 </div>
-<div id="custom-bg"><video id="custom-bg-video" muted loop playsinline preload="metadata"></video></div>
+<div id="custom-bg"><video id="custom-bg-video" muted loop playsinline preload="metadata"></video><div id="custom-bg-fx"></div></div>
 <div id="album-bg"></div>
 <div id="canvas-container"></div>
 <canvas id="idle-guide-canvas" aria-hidden="true"></canvas>
@@ -1987,10 +2011,19 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
 <section id="empty-home" aria-label="Mineradio home">
   <div class="empty-home-shell">
     <div class="home-hero">
+      <div class="home-hero-bg" id="home-hero-bg"><video id="home-hero-bg-video" muted loop playsinline preload="metadata"></video></div>
       <div class="home-hero-inner home-now-inner">
         <div class="home-now-top">
           <span class="home-now-brand">MINERADIO</span>
-          <span class="home-now-status"><span class="home-now-dot"></span>准备就绪</span>
+          <span class="home-now-top-right">
+            <span class="home-now-status"><span class="home-now-dot"></span>准备就绪</span>
+            <button class="home-now-bg-btn" id="home-now-bg-menu-btn" type="button" onclick="openHomeHeroBgMenu(event)" title="设置卡片背景图" aria-label="设置卡片背景图"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
+            <div class="home-now-bg-menu" id="home-now-bg-menu">
+              <button type="button" onclick="triggerHomeHeroBgUpload()">上传图片</button>
+              <button type="button" onclick="pickHomeHeroBgFromWe()">从 Wallpaper Engine 选</button>
+              <button type="button" onclick="clearHomeHeroBg()">清除背景</button>
+            </div>
+          </span>
         </div>
         <div class="home-now-center">
           <div class="home-now-greet" id="home-now-greet">你好</div>
@@ -2053,11 +2086,20 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
     </div>
 
     <div class="home-rail">
-      <div class="home-section-head">
-        <div class="home-section-title" id="home-rail-title">为你准备</div>
-        <div class="home-section-note" id="home-rail-note">正在整理推荐</div>
+      <div class="home-rail-block">
+        <div class="home-section-head">
+          <div class="home-section-title">我的歌单</div>
+          <div class="home-section-note" id="home-playlist-note">登录后在这里挑你的歌单</div>
+        </div>
+        <div id="home-playlist-row" class="home-pl-row"></div>
       </div>
-      <div id="home-tile-row" class="home-tile-row"></div>
+      <div class="home-rail-block">
+        <div class="home-section-head">
+          <div class="home-section-title" id="home-rail-title">为你准备</div>
+          <div class="home-section-note" id="home-rail-note">正在整理推荐</div>
+        </div>
+        <div id="home-tile-row" class="home-tile-row"></div>
+      </div>
     </div>
   </div>
 </section>
@@ -2146,6 +2188,19 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
     <button class="fx-mini-btn ghost" type="button" onclick="openWallpaperEnginePicker()">选择</button>
     <div class="fx-color-row-label">设置背景<small id="bg-image-value">未设置</small></div>
     <button class="fx-mini-btn ghost" type="button" onclick="clearCustomBackgroundImage()">清除</button>
+  </div>
+  <div class="fx-seg" id="wallpaper-rotate-seg" title="选择器里勾选 ≥2 张壁纸后，按此在它们之间自动轮播">
+    <button data-wallpaper-rotate="off" class="active">轮播·关</button>
+    <button data-wallpaper-rotate="loop">循环</button>
+    <button data-wallpaper-rotate="shuffle">随机</button>
+  </div>
+  <div class="fx-slider"><label>轮播间隔</label><input id="fx-wallpaper-rotate-min" type="range" min="1" max="60" step="1"><output></output></div>
+  <div class="fx-seg" id="wallpaper-transition-seg" title="轮播切换壁纸时的过渡动画">
+    <button data-wallpaper-transition="none">无</button>
+    <button data-wallpaper-transition="fade">淡入</button>
+    <button data-wallpaper-transition="crossfade" class="active">交叉</button>
+    <button data-wallpaper-transition="zoom">缩放</button>
+    <button data-wallpaper-transition="slide">滑入</button>
   </div>
   <div class="fx-slider"><label>背景透明度</label><input id="fx-bgopacity" type="range" min="0" max="1" step="0.01"><output></output></div>
   <div class="fx-slider"><label>控制台玻璃色差</label><input id="fx-glassaberration" type="range" min="0" max="140" step="1"><output></output></div>
@@ -2531,12 +2586,14 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
     <div id="we-picker-grid" class="we-picker-grid"></div>
     <div class="btn-row">
       <button class="modal-btn" onclick="closeWallpaperEnginePicker()">取消</button>
-      <button class="modal-btn primary" onclick="openWallpaperEnginePicker(true)">重新扫描</button>
+      <button class="modal-btn" onclick="openWallpaperEnginePicker(true)">重新扫描</button>
+      <button class="modal-btn primary" id="we-apply-btn" onclick="applyWallpaperEngineSelection()">应用 (0)</button>
     </div>
   </div>
 </div>
 
 <input type="file" id="background-image-input" accept=".jpg,.jpeg,.png,.webp,.mp4,.webm,.mov,image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime" style="display:none">
+<input type="file" id="home-hero-bg-input" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="readHomeHeroBgFile(this.files && this.files[0]); this.value='';">
 <div id="drop-overlay"><div class="drop-text">拖放音乐或封面</div></div>
 <div id="free-camera-hint"><b>自由镜头</b> R 固定/退出 · WASD 移动 · 鼠标转向 · Shift 加速 · Space/Ctrl 升降 · Q/E 轻微旋转 · 滚轮景深 · K 回正</div>
 <div id="loading-overlay"><div class="spinner"></div></div>
@@ -3322,6 +3379,11 @@ var fxDefaults = {
   desktopLyricsFps: 60,
   wallpaperMode: false,
   wallpaperOpacity: 1,
+  wallpaperRotateMode: 'off',
+  wallpaperRotateMinutes: 5,
+  wallpaperRotateItems: [],
+  wallpaperRotateTransition: 'crossfade',
+  homeHeroBg: '',
   floatLayer: false, cinema: true, edge: false, aiDepth: false, bloom: false, lyricGlow: true,
   lyricGlowBeat: true,
   lyricGlowParticles: false,
@@ -7691,6 +7753,11 @@ function readSavedLyricLayout() {
       liveBackgroundKeep: normalizePerformanceBackgroundMode(raw.performanceBackground, raw.liveBackgroundKeep === true) === 'keep',
       wallpaperMode: false,
       wallpaperOpacity: clampRange(raw.wallpaperOpacity == null ? fxDefaults.wallpaperOpacity : Number(raw.wallpaperOpacity), 0.35, 1),
+      wallpaperRotateMode: normalizeWallpaperRotateMode(raw.wallpaperRotateMode),
+      wallpaperRotateMinutes: normalizeWallpaperRotateMinutes(raw.wallpaperRotateMinutes == null ? fxDefaults.wallpaperRotateMinutes : raw.wallpaperRotateMinutes),
+      wallpaperRotateItems: normalizeWallpaperRotateItems(raw.wallpaperRotateItems),
+      wallpaperRotateTransition: normalizeWallpaperRotateTransition(raw.wallpaperRotateTransition),
+      homeHeroBg: normalizeHomeHeroBg(raw.homeHeroBg) || '',
       coverResolution: normalizeCoverResolution(raw.coverResolution),
       shelf: /^(off|side|stage)$/.test(String(raw.shelf || '')) ? raw.shelf : fxDefaults.shelf,
       shelfCameraMode: savedShelfCameraMode,
@@ -7781,6 +7848,11 @@ function saveLyricLayout() {
       liveBackgroundKeep: normalizePerformanceBackgroundMode(fx.performanceBackground, fx.liveBackgroundKeep === true) === 'keep',
       wallpaperMode: false,
       wallpaperOpacity: clampRange(fx.wallpaperOpacity == null ? fxDefaults.wallpaperOpacity : Number(fx.wallpaperOpacity), 0.35, 1),
+      wallpaperRotateMode: normalizeWallpaperRotateMode(fx.wallpaperRotateMode),
+      wallpaperRotateMinutes: normalizeWallpaperRotateMinutes(fx.wallpaperRotateMinutes),
+      wallpaperRotateItems: normalizeWallpaperRotateItems(fx.wallpaperRotateItems),
+      wallpaperRotateTransition: normalizeWallpaperRotateTransition(fx.wallpaperRotateTransition),
+      homeHeroBg: normalizeHomeHeroBg(fx.homeHeroBg) || '',
       coverResolution: normalizeCoverResolution(fx.coverResolution),
       shelf: /^(off|side|stage)$/.test(String(fx.shelf || '')) ? fx.shelf : fxDefaults.shelf,
       shelfCameraMode: normalizeShelfCameraMode(fx.shelfCameraMode || fxDefaults.shelfCameraMode),
@@ -15604,7 +15676,102 @@ function updateHomeNowResume() {
 function renderHomeNowScreen() {
   updateHomeNowClock();
   updateHomeNowResume();
+  applyHomeHeroBg();
   ensureHomeNowClock();
+}
+// ---------- Now 屏卡片背景图（上传 / Wallpaper Engine / 清除）----------
+var wePickTarget = 'rotation';
+function normalizeHomeHeroBg(v) {
+  if (!v) return null;
+  if (typeof v === 'string') return v ? { type: 'image', src: v } : null;
+  if (typeof v === 'object' && v.src) return { type: v.type === 'video' ? 'video' : 'image', src: String(v.src) };
+  return null;
+}
+function applyHomeHeroBg() {
+  var layer = document.getElementById('home-hero-bg');
+  if (!layer) return;
+  var video = document.getElementById('home-hero-bg-video');
+  var bg = normalizeHomeHeroBg(fx.homeHeroBg);
+  if (!bg || !bg.src) {
+    layer.classList.remove('on');
+    layer.classList.remove('video');
+    layer.style.backgroundImage = 'none';
+    if (video) { try { video.pause(); } catch (e) {} video.removeAttribute('src'); try { video.load(); } catch (e) {} }
+    return;
+  }
+  layer.classList.add('on');
+  if (bg.type === 'video' && video) {
+    layer.style.backgroundImage = 'none';
+    layer.classList.add('video');
+    if (video.getAttribute('src') !== bg.src) video.src = bg.src;
+    video.muted = true;
+    video.loop = true;
+    var pr = video.play && video.play();
+    if (pr && pr.catch) pr.catch(function(){});
+  } else {
+    layer.classList.remove('video');
+    if (video) { try { video.pause(); } catch (e) {} video.removeAttribute('src'); }
+    layer.style.backgroundImage = 'url("' + cssImageUrl(bg.src) + '")';
+  }
+}
+function setHomeHeroBg(bg, silent) {
+  fx.homeHeroBg = normalizeHomeHeroBg(bg) || '';
+  applyHomeHeroBg();
+  saveLyricLayout();
+  closeHomeHeroBgMenu();
+  if (!silent) showToast(fx.homeHeroBg ? 'Now 屏背景已设置' : 'Now 屏背景已清除');
+}
+function clearHomeHeroBg() { setHomeHeroBg(''); }
+function openHomeHeroBgMenu(e) {
+  if (e) e.stopPropagation();
+  var menu = document.getElementById('home-now-bg-menu');
+  if (!menu) return;
+  var open = menu.classList.toggle('open');
+  if (open) setTimeout(function(){ document.addEventListener('mousedown', closeHomeHeroBgMenuOnce, true); }, 0);
+  else document.removeEventListener('mousedown', closeHomeHeroBgMenuOnce, true);
+}
+function closeHomeHeroBgMenu() {
+  var menu = document.getElementById('home-now-bg-menu');
+  if (menu) menu.classList.remove('open');
+  document.removeEventListener('mousedown', closeHomeHeroBgMenuOnce, true);
+}
+function closeHomeHeroBgMenuOnce(e) {
+  var menu = document.getElementById('home-now-bg-menu');
+  var btn = document.getElementById('home-now-bg-menu-btn');
+  if ((menu && menu.contains(e.target)) || (btn && btn.contains(e.target))) return;
+  closeHomeHeroBgMenu();
+}
+function triggerHomeHeroBgUpload() {
+  closeHomeHeroBgMenu();
+  var input = document.getElementById('home-hero-bg-input');
+  if (input) input.click();
+}
+function pickHomeHeroBgFromWe() {
+  closeHomeHeroBgMenu();
+  openWallpaperEnginePicker(false, 'hero');
+}
+function readHomeHeroBgFile(file) {
+  if (!file || !/^image\//i.test(file.type || '')) { showToast('请选择图片文件'); return; }
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var img = new Image();
+    img.onload = function(){
+      var maxSide = 1600;
+      var iw = img.naturalWidth || img.width || 1, ih = img.naturalHeight || img.height || 1;
+      var scale = Math.min(1, maxSide / Math.max(iw, ih));
+      var w = Math.max(1, Math.round(iw * scale)), h = Math.max(1, Math.round(ih * scale));
+      var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      var out = '';
+      try { out = cv.toDataURL('image/webp', 0.85); } catch (err) {}
+      if (!/^data:image\/webp/i.test(out)) { try { out = cv.toDataURL('image/jpeg', 0.86); } catch (e2) { out = String(e.target.result || ''); } }
+      setHomeHeroBg({ type: 'image', src: out });
+    };
+    img.onerror = function(){ showToast('图片读取失败'); };
+    img.src = e.target.result;
+  };
+  reader.onerror = function(){ showToast('图片读取失败'); };
+  reader.readAsDataURL(file);
 }
 function playHomeNowResume() {
   var summary = homeListenSummary();
@@ -15711,6 +15878,38 @@ function renderHomeTiles() {
   row._homeTiles = tiles;
   renderHomeMosaic(tiles);
 }
+function openHomeUserPlaylist(index) {
+  var pl = (userPlaylists || [])[index];
+  if (!pl || !pl.id) { openHomeLibrary(); return; }
+  var pid = String(pl.id);
+  if (pl.provider === 'spotify' && pid.indexOf('spotify:') !== 0) pid = 'spotify:' + pid;
+  homeForcedOpen = false;
+  homeSuppressed = false;
+  setHomeControlsLocked(false);
+  openPlaylistPanelTab('playlists', true);
+  loadPlaylistIntoQueueById(pid, true, pl.name || '');
+}
+function renderHomePlaylistPicker() {
+  var row = document.getElementById('home-playlist-row');
+  var note = document.getElementById('home-playlist-note');
+  if (!row) return;
+  var lists = (userPlaylists || []).filter(function(pl){ return pl && pl.id; });
+  var loggedOut = !hasAnyPlatformLogin() && !homeDiscoverState.loggedIn;
+  if (note) note.textContent = loggedOut ? '登录后在这里挑你的歌单' : (lists.length ? (lists.length + ' 个歌单 · 点一张直接播放') : '暂无歌单');
+  if (!lists.length) {
+    row.innerHTML = '<div class="home-pl-empty">' + (loggedOut ? '登录后显示你的歌单' : '暂无歌单') + '</div>';
+    return;
+  }
+  row.innerHTML = lists.map(function(pl, i){
+    var cover = pl.cover ? coverUrlWithSize(pl.cover, 220) : '';
+    var sub = pl.trackCount ? (pl.trackCount + ' 首') : (pl.provider === 'spotify' ? 'Spotify' : 'YouTube Music');
+    return '<button class="home-pl-card" type="button" data-provider="' + escHtml(pl.provider || '') + '" onclick="openHomeUserPlaylist(' + i + ')" title="' + escHtml(pl.name || '') + '">' +
+      '<div class="home-pl-cover' + (cover ? ' has-cover' : '') + '"' + (cover ? ' style="background-image:url(\'' + cssImageUrl(cover) + '\')"' : '') + '></div>' +
+      '<div class="home-pl-name">' + escHtml(pl.name || '歌单') + '</div>' +
+      '<div class="home-pl-sub">' + escHtml(sub) + '</div>' +
+    '</button>';
+  }).join('');
+}
 function renderHomeDiscover() {
   renderHomeNowScreen();
   var sub = document.getElementById('home-subtitle');
@@ -15795,6 +15994,7 @@ function renderHomeDiscover() {
     setHomeArt('home-library-art', cardSongC && cardSongC.cover, 280);
   }
   renderHomeTiles();
+  renderHomePlaylistPicker();
 }
 async function loadHomeDiscover(force) {
   if (homeDiscoverState.loading) return;
@@ -20466,6 +20666,11 @@ function normalizeFxArchiveSnapshot(raw) {
     backgroundOpacity: archiveNumber(raw, 'backgroundOpacity', fxDefaults.backgroundOpacity, 0, 1),
     controlGlassChromaticOffset: archiveNumber(raw, 'controlGlassChromaticOffset', fxDefaults.controlGlassChromaticOffset, 0, 140),
     backgroundColorCustom: raw.backgroundColorMode === 'custom' || !!raw.backgroundColorCustom,
+    wallpaperRotateMode: normalizeWallpaperRotateMode(raw.wallpaperRotateMode),
+    wallpaperRotateMinutes: normalizeWallpaperRotateMinutes(raw.wallpaperRotateMinutes == null ? fxDefaults.wallpaperRotateMinutes : raw.wallpaperRotateMinutes),
+    wallpaperRotateItems: normalizeWallpaperRotateItems(raw.wallpaperRotateItems),
+    wallpaperRotateTransition: normalizeWallpaperRotateTransition(raw.wallpaperRotateTransition),
+    homeHeroBg: normalizeHomeHeroBg(raw.homeHeroBg) || '',
     floatLayer: !!raw.floatLayer,
     cinema: raw.cinema !== false,
     edge: !!raw.edge,
@@ -20598,6 +20803,8 @@ function applyFxArchiveSnapshot(snapshot) {
   applyWallpaperModeState(true);
   updateRenderPowerClasses();
   applyRendererPowerMode();
+  updateWallpaperRotateUi();
+  restartWallpaperRotation();
   saveLyricLayout();
   return true;
 }
@@ -21148,10 +21355,13 @@ function setCustomBackgroundMedia(media, silent) {
   saveLyricLayout();
   if (!silent) showToast(media ? (media.type === 'video' ? '背景视频已应用' : '背景图片已应用') : '背景媒体已清除');
 }
-async function openWallpaperEnginePicker(rescan) {
+async function openWallpaperEnginePicker(rescan, target) {
+  if (!rescan) wePickTarget = target === 'hero' ? 'hero' : 'rotation';
   var modal = document.getElementById('we-picker-modal');
   if (!modal) return;
   openGsapModal(modal);
+  var applyBtn = document.getElementById('we-apply-btn');
+  if (applyBtn) applyBtn.style.display = wePickTarget === 'hero' ? 'none' : '';
   var grid = document.getElementById('we-picker-grid');
   var status = document.getElementById('we-picker-status');
   if (grid) grid.innerHTML = '';
@@ -21164,13 +21374,16 @@ async function openWallpaperEnginePicker(rescan) {
       return;
     }
     if (status) status.style.display = 'none';
+    var weGroupIds = {};
+    if (wePickTarget !== 'hero') wallpaperRotateGroup().forEach(function(m){ if (m.weId) weGroupIds[m.weId] = 1; });
     if (grid) grid.innerHTML = items.map(function(it){
       var prev = it.hasPreview ? ('/api/wallpaper-engine/media?id=' + encodeURIComponent(it.id) + '&kind=preview') : '';
       var thumb = prev ? ('<img src="' + prev + '" alt="" loading="lazy" onerror="this.style.opacity=0.15">') : ('<div class="we-thumb-empty">' + (it.type === 'video' ? '🎞' : '🖼') + '</div>');
-      return '<button class="we-item" type="button" data-id="' + escHtml(it.id) + '" data-type="' + escHtml(it.type) + '" data-title="' + escHtml(it.title) + '" onclick="selectWallpaperEngineItem(this)">' +
+      return '<button class="we-item' + (weGroupIds[it.id] ? ' selected' : '') + '" type="button" data-id="' + escHtml(it.id) + '" data-type="' + escHtml(it.type) + '" data-title="' + escHtml(it.title) + '" onclick="toggleWallpaperEngineItem(this)">' +
         '<div class="we-thumb">' + thumb + '<span class="we-type-badge">' + (it.type === 'video' ? '视频' : '图片') + '</span></div>' +
         '<div class="we-item-title">' + escHtml(it.title) + '</div></button>';
     }).join('');
+    updateWeApplyCount();
   } catch (e) {
     if (status) { status.style.display = ''; status.textContent = '扫描失败: ' + (e && e.message ? e.message : e); }
   }
@@ -21185,6 +21398,215 @@ function selectWallpaperEngineItem(btn) {
 }
 function closeWallpaperEnginePicker() {
   closeGsapModal(document.getElementById('we-picker-modal'));
+}
+// ---------- 壁纸/背景 轮播（多选一组 · 循环/随机 · 自定义间隔）----------
+var wallpaperRotateTimer = null;
+function normalizeWallpaperRotateMode(mode) {
+  return /^(off|loop|shuffle)$/.test(String(mode || '')) ? String(mode) : 'off';
+}
+function normalizeWallpaperRotateMinutes(value) {
+  return clampRange(Math.round(Number(value) || 5), 1, 60);
+}
+function normalizeWallpaperRotateItems(list) {
+  if (!Array.isArray(list)) return [];
+  var out = [];
+  list.forEach(function(it){ var m = normalizeCustomBackgroundMedia(it); if (m && m.src) out.push(m); });
+  return out.slice(0, 60);
+}
+function wallpaperRotateGroup() {
+  return normalizeWallpaperRotateItems(fx.wallpaperRotateItems);
+}
+function toggleWallpaperEngineItem(btn) {
+  if (!btn) return;
+  if (wePickTarget === 'hero') {
+    var heroId = btn.getAttribute('data-id');
+    var heroType = btn.getAttribute('data-type') === 'video' ? 'video' : 'image';
+    if (heroId) setHomeHeroBg({ type: heroType, src: '/api/wallpaper-engine/media?id=' + encodeURIComponent(heroId) + '&kind=file' });
+    closeWallpaperEnginePicker();
+    wePickTarget = 'rotation';
+    return;
+  }
+  btn.classList.toggle('selected');
+  updateWeApplyCount();
+}
+function updateWeApplyCount() {
+  var n = document.querySelectorAll('#we-picker-grid .we-item.selected').length;
+  var b = document.getElementById('we-apply-btn');
+  if (b) b.textContent = '应用 (' + n + ')';
+}
+function collectWallpaperEngineSelection() {
+  var out = [];
+  document.querySelectorAll('#we-picker-grid .we-item.selected').forEach(function(el){
+    var id = el.getAttribute('data-id');
+    if (!id) return;
+    out.push({
+      type: el.getAttribute('data-type') === 'video' ? 'video' : 'image',
+      src: '/api/wallpaper-engine/media?id=' + encodeURIComponent(id) + '&kind=file',
+      name: el.getAttribute('data-title') || '',
+      weId: id
+    });
+  });
+  return out;
+}
+function applyWallpaperEngineSelection() {
+  var items = collectWallpaperEngineSelection();
+  if (!items.length) { showToast('先勾选至少一张壁纸'); return; }
+  applyWallpaperRotateGroup(items);
+  closeWallpaperEnginePicker();
+}
+function applyWallpaperRotateGroup(items) {
+  var norm = normalizeWallpaperRotateItems(items);
+  fx.wallpaperRotateItems = norm;
+  if (norm.length >= 2) {
+    if (normalizeWallpaperRotateMode(fx.wallpaperRotateMode) === 'off') fx.wallpaperRotateMode = 'loop';
+    setCustomBackgroundMedia(norm[0], true);
+    updateWallpaperRotateUi();
+    saveLyricLayout();
+    restartWallpaperRotation();
+    showToast('壁纸轮播组已应用（' + norm.length + ' 张 · ' + (fx.wallpaperRotateMode === 'shuffle' ? '随机' : '循环') + '）');
+  } else if (norm.length === 1) {
+    fx.wallpaperRotateMode = 'off';
+    updateWallpaperRotateUi();
+    restartWallpaperRotation();
+    setCustomBackgroundMedia(norm[0]);
+  } else {
+    fx.wallpaperRotateMode = 'off';
+    updateWallpaperRotateUi();
+    saveLyricLayout();
+    restartWallpaperRotation();
+  }
+}
+function setWallpaperRotateMode(mode, silent) {
+  fx.wallpaperRotateMode = normalizeWallpaperRotateMode(mode);
+  updateWallpaperRotateUi();
+  saveLyricLayout();
+  restartWallpaperRotation();
+  if (!silent) {
+    var label = fx.wallpaperRotateMode === 'off' ? '关' : (fx.wallpaperRotateMode === 'loop' ? '循环' : '随机');
+    showToast('壁纸轮播: ' + label);
+    if (fx.wallpaperRotateMode !== 'off' && wallpaperRotateGroup().length < 2) showToast('先在「选择」里勾选 ≥2 张作为轮播组');
+  }
+}
+function setWallpaperRotateMinutes(value, silent) {
+  fx.wallpaperRotateMinutes = normalizeWallpaperRotateMinutes(value);
+  updateWallpaperRotateUi();
+  saveLyricLayout();
+  restartWallpaperRotation();
+  if (!silent) showToast('轮播间隔: ' + fx.wallpaperRotateMinutes + ' 分钟');
+}
+function updateWallpaperRotateUi() {
+  var mode = normalizeWallpaperRotateMode(fx.wallpaperRotateMode);
+  document.querySelectorAll('#wallpaper-rotate-seg [data-wallpaper-rotate]').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-wallpaper-rotate') === mode);
+  });
+  var trans = normalizeWallpaperRotateTransition(fx.wallpaperRotateTransition);
+  document.querySelectorAll('#wallpaper-transition-seg [data-wallpaper-transition]').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-wallpaper-transition') === trans);
+  });
+  var slider = document.getElementById('fx-wallpaper-rotate-min');
+  if (slider) {
+    var mins = normalizeWallpaperRotateMinutes(fx.wallpaperRotateMinutes);
+    slider.value = mins;
+    var out = slider.parentElement && slider.parentElement.querySelector('output');
+    if (out) out.textContent = mins + ' 分钟';
+  }
+}
+function wallpaperRotateStep() {
+  if (document.hidden) return;
+  var items = wallpaperRotateGroup();
+  var mode = normalizeWallpaperRotateMode(fx.wallpaperRotateMode);
+  if (mode === 'off' || items.length < 2) return;
+  var curSrc = (fx.backgroundMedia && fx.backgroundMedia.src) || '';
+  var curIdx = -1;
+  for (var i = 0; i < items.length; i++) { if (items[i].src === curSrc) { curIdx = i; break; } }
+  var nextIdx;
+  if (mode === 'shuffle') {
+    do { nextIdx = Math.floor(Math.random() * items.length); } while (nextIdx === curIdx && items.length > 1);
+  } else {
+    nextIdx = (curIdx < 0 ? 0 : (curIdx + 1)) % items.length;
+  }
+  swapBackgroundWithTransition(items[nextIdx]);
+}
+function stopWallpaperRotation() {
+  if (wallpaperRotateTimer) { clearInterval(wallpaperRotateTimer); wallpaperRotateTimer = null; }
+}
+function restartWallpaperRotation() {
+  stopWallpaperRotation();
+  var items = wallpaperRotateGroup();
+  if (normalizeWallpaperRotateMode(fx.wallpaperRotateMode) === 'off' || items.length < 2) return;
+  wallpaperRotateTimer = setInterval(wallpaperRotateStep, normalizeWallpaperRotateMinutes(fx.wallpaperRotateMinutes) * 60 * 1000);
+}
+function normalizeWallpaperRotateTransition(t) {
+  return /^(none|fade|crossfade|zoom|slide)$/.test(String(t || '')) ? String(t) : 'crossfade';
+}
+function wallpaperTransitionLabel(t) {
+  return ({ none: '无', fade: '淡入淡出', crossfade: '交叉淡化', zoom: '缩放', slide: '滑入' })[normalizeWallpaperRotateTransition(t)] || '交叉淡化';
+}
+function setWallpaperRotateTransition(t, silent) {
+  fx.wallpaperRotateTransition = normalizeWallpaperRotateTransition(t);
+  updateWallpaperRotateUi();
+  saveLyricLayout();
+  if (!silent) showToast('切换动画: ' + wallpaperTransitionLabel(fx.wallpaperRotateTransition));
+}
+var WALLPAPER_SWAP_MS = 800;
+function captureBgToOverlay(overlay) {
+  var media = normalizeCustomBackgroundMedia(fx.backgroundMedia || fx.backgroundImage);
+  if (media && media.type === 'image' && media.src) {
+    overlay.style.backgroundImage = 'url("' + cssImageUrl(media.src) + '")';
+    return true;
+  }
+  var video = document.getElementById('custom-bg-video');
+  if (media && media.type === 'video' && video && video.videoWidth) {
+    try {
+      var w = Math.min(960, video.videoWidth || 960);
+      var scale = w / (video.videoWidth || w);
+      var cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = Math.max(1, Math.round((video.videoHeight || 540) * scale));
+      cv.getContext('2d').drawImage(video, 0, 0, cv.width, cv.height);
+      overlay.style.backgroundImage = 'url("' + cv.toDataURL('image/jpeg', 0.82) + '")';
+      return true;
+    } catch (e) { return false; }
+  }
+  return false;
+}
+function swapBgFadeDip(item) {
+  var layer = document.getElementById('custom-bg');
+  if (!layer) { setCustomBackgroundMedia(item, true); return; }
+  var half = Math.round(WALLPAPER_SWAP_MS / 2);
+  layer.style.transition = 'opacity ' + half + 'ms ease';
+  layer.style.opacity = '0';
+  clearTimeout(layer._bgFxTimer);
+  layer._bgFxTimer = setTimeout(function(){
+    setCustomBackgroundMedia(item, true);
+    void layer.offsetWidth;
+    layer.style.opacity = '1';
+    setTimeout(function(){ layer.style.transition = ''; layer.style.opacity = ''; }, half + 60);
+  }, half + 20);
+}
+function swapBackgroundWithTransition(item) {
+  var type = normalizeWallpaperRotateTransition(fx.wallpaperRotateTransition);
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (type === 'none' || reduce || document.hidden) { setCustomBackgroundMedia(item, true); return; }
+  if (type === 'fade') { swapBgFadeDip(item); return; }
+  var overlay = document.getElementById('custom-bg-fx');
+  if (!overlay || !captureBgToOverlay(overlay)) { swapBgFadeDip(item); return; }
+  setCustomBackgroundMedia(item, true);
+  var outTransform = type === 'zoom' ? 'scale(1.10)' : (type === 'slide' ? 'translateX(30%)' : 'none');
+  overlay.style.transition = 'none';
+  overlay.style.opacity = '1';
+  overlay.style.transform = 'none';
+  void overlay.offsetWidth;
+  overlay.style.transition = 'opacity ' + WALLPAPER_SWAP_MS + 'ms ease, transform ' + WALLPAPER_SWAP_MS + 'ms ease';
+  overlay.style.opacity = '0';
+  overlay.style.transform = outTransform;
+  clearTimeout(overlay._bgFxTimer);
+  overlay._bgFxTimer = setTimeout(function(){
+    overlay.style.transition = 'none';
+    overlay.style.opacity = '0';
+    overlay.style.transform = 'none';
+    overlay.style.backgroundImage = 'none';
+  }, WALLPAPER_SWAP_MS + 80);
 }
 function readBackgroundImageFile(file) {
   if (!file || !/^image\//i.test(file.type || '')) {
@@ -21764,6 +22186,7 @@ function updateFxInputs() {
   setRange('fx-lyricglow', fx.lyricGlowStrength);
   setRange('fx-bgopacity', fx.backgroundOpacity == null ? 1 : fx.backgroundOpacity);
   setRange('fx-glassaberration', fx.controlGlassChromaticOffset);
+  updateWallpaperRotateUi();
   setRange('fx-desktoplyricssize', fx.desktopLyricsSize);
   setRange('fx-desktoplyricsopacity', fx.desktopLyricsOpacity);
   setRange('fx-desktoplyricsy', fx.desktopLyricsY);
@@ -22647,6 +23070,23 @@ function bindFxPanel() {
   document.querySelectorAll('#shelf-camera-seg [data-shelf-camera]').forEach(function(b){
     b.addEventListener('click', function(){ setShelfCameraMode(b.getAttribute('data-shelf-camera')); });
   });
+  document.querySelectorAll('#wallpaper-rotate-seg [data-wallpaper-rotate]').forEach(function(b){
+    b.addEventListener('click', function(){ setWallpaperRotateMode(b.getAttribute('data-wallpaper-rotate')); });
+  });
+  document.querySelectorAll('#wallpaper-transition-seg [data-wallpaper-transition]').forEach(function(b){
+    b.addEventListener('click', function(){ setWallpaperRotateTransition(b.getAttribute('data-wallpaper-transition')); });
+  });
+  (function(){
+    var rslider = document.getElementById('fx-wallpaper-rotate-min');
+    if (!rslider) return;
+    rslider.addEventListener('input', function(){
+      fx.wallpaperRotateMinutes = normalizeWallpaperRotateMinutes(rslider.value);
+      updateWallpaperRotateUi();
+    });
+    rslider.addEventListener('change', function(){ setWallpaperRotateMinutes(rslider.value); });
+  })();
+  updateWallpaperRotateUi();
+  restartWallpaperRotation();
   document.querySelectorAll('#shelf-presence-seg [data-shelf-presence]').forEach(function(b){
     b.addEventListener('click', function(){ setShelfPresence(b.getAttribute('data-shelf-presence')); });
   });
