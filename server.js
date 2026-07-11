@@ -2675,8 +2675,33 @@ function cleanLyricTitle(name) {
   return t.replace(/\s{2,}/g, ' ').trim();
 }
 
+// 占位歌手名（YTM 无 author 时填的默认值 / 各种“未知”），匹配歌词时应视作“无歌手”，否则污染查询。
+function isPlaceholderArtist(a) {
+  const s = String(a || '').trim().toLowerCase();
+  return !s || s === 'unknown artist' || s === 'unknown' || s === 'various artists'
+    || s === 'va' || s === 'v.a.' || s === 'artist' || s === '未知歌手' || s === '未知艺术家' || s === '群星';
+}
+// 从标题里抢救 feat./ft. 后面的演出者（歌手是占位符时用它当匹配歌手，命中率高很多）。
+function featArtistFromTitle(name) {
+  const m = String(name || '').match(/(?:^|[\s(\[（【「『])(?:feat\.?|ft\.?|featuring)\s+([^)\]\-|｜、,]+)/i);
+  return m ? m[1].replace(/[)\]】』」]/g, '').trim() : '';
+}
 function cleanLyricArtist(artist) {
-  return primaryArtistName(artist).replace(/\s*-\s*topic\s*$/i, '').replace(/\s*vevo\s*$/i, '').trim();
+  const a = primaryArtistName(artist).replace(/\s*-\s*topic\s*$/i, '').replace(/\s*vevo\s*$/i, '').trim();
+  return isPlaceholderArtist(a) ? '' : a;
+}
+// 归一化匹配键：小写、去括号内容(feat/版本)、只保留字母数字与 CJK，用来校验歌名/歌手是否真的对得上。
+function normalizeMatchKey(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[\(\[（【][^\)\]）】]*[\)\]）】]/g, ' ')
+    .replace(/[^0-9a-z぀-ヿ㐀-鿿가-힣]+/g, '')
+    .trim();
+}
+// 一方包含另一方即算匹配（容忍多余的版本/feat 信息）。任一侧为空则不算匹配。
+function matchKeyContains(a, b) {
+  a = normalizeMatchKey(a); b = normalizeMatchKey(b);
+  if (!a || !b) return false;
+  return a.includes(b) || b.includes(a);
 }
 
 async function lrcLibGet(artist, track, album, durationSec) {
@@ -2699,15 +2724,23 @@ async function lrcLibSearch(track, artist, durationSec) {
   const list = await requestJson(u.toString(), { headers: LRCLIB_HEADERS });
   if (!Array.isArray(list) || !list.length) return null;
   const best = list.map(item => {
+    const titleOk = matchKeyContains(item.trackName || item.name, track);
+    const artistOk = artist ? matchKeyContains(item.artistName, artist) : false;
+    const diff = (durationSec > 0 && item.duration) ? Math.abs(Number(item.duration) - durationSec) : 999;
     let score = 0;
     if (item.syncedLyrics) score += 10;
+    if (titleOk) score += 4;
+    if (artistOk) score += 5;
     if (durationSec > 0 && item.duration) {
-      const diff = Math.abs(Number(item.duration) - durationSec);
       if (diff <= 2) score += 6; else if (diff <= 5) score += 3; else if (diff > 25) score -= 5;
     }
-    return { item, score };
+    return { item, score, titleOk, artistOk, diff };
   }).sort((a, b) => b.score - a.score)[0];
-  if (best && best.item && (best.item.syncedLyrics || best.item.plainLyrics)) {
+  // 置信门槛：歌名必须匹配，且(歌手匹配 或 时长很接近≤8s)，否则不采信——
+  // 避免无歌手/纯歌名搜索时配到同名的另一首歌。
+  if (!best || !best.titleOk) return null;
+  if (!best.artistOk && !(durationSec > 0 && best.diff <= 8)) return null;
+  if (best.item && (best.item.syncedLyrics || best.item.plainLyrics)) {
     return { synced: best.item.syncedLyrics || '', plain: best.item.plainLyrics || '', source: 'lrclib-search' };
   }
   return null;
@@ -2726,19 +2759,23 @@ async function fetchLrcLibLyrics(opts) {
   if (lrcLibCache.has(cacheKey)) return lrcLibCache.get(cacheKey);
 
   const tracks = cleanTrack.toLowerCase() === rawTrack.toLowerCase() ? [cleanTrack] : [cleanTrack, rawTrack];
-  let result = null;
-  outer:
+  // 候选按优先级排列：精确匹配 > 带歌手搜索 > 无歌手搜索，清洗名优先于原始名。
+  // lrclib.net 每次请求都要 ~7s（服务端 TTFB），串行会把延迟叠加到十几秒；改为全部并发发出，
+  // 再按优先级挑第一个命中的，延迟从 N×7s 降到约 1×7s。
+  const attempts = [];
   for (const tk of tracks) {
-    // 1) 精确匹配（需歌手）
-    if (artist) {
-      try { result = await lrcLibGet(artist, tk, album, durationSec); if (result) break outer; } catch (e) {}
-    }
-    // 2) 带歌手搜索
-    try { result = await lrcLibSearch(tk, artist, durationSec); if (result) break outer; } catch (e) {}
-    // 3) 无歌手搜索（仅歌名，靠时长挑）
-    if (artist) {
-      try { result = await lrcLibSearch(tk, '', durationSec); if (result) break outer; } catch (e) {}
-    }
+    if (artist) attempts.push(() => lrcLibGet(artist, tk, album, durationSec)); // 1) 精确匹配（需歌手）
+    attempts.push(() => lrcLibSearch(tk, artist, durationSec));                  // 2) 搜索（歌手已知时带歌手；未知时才纯歌名）
+  }
+  // 注：不再对“已知歌手”做无歌手的纯歌名兜底搜索——它会把同名的另一首歌（甚至别的语言）
+  // 靠时长凑上来，造成“歌词是错的”。歌手已知却搜不到，就宁可没有歌词。
+  // 全部并发发出，再按优先级顺序取结果：高优先级一旦命中就立刻返回，不等低优先级的慢请求
+  // （避免精确匹配已命中却还要干等两个慢搜索）。
+  const inflight = attempts.map(fn => fn().catch(() => null));
+  let result = null;
+  for (const p of inflight) {
+    const r = await p;
+    if (r && (r.synced || r.plain)) { result = r; break; }
   }
   lrcLibCache.set(cacheKey, result);
   if (lrcLibCache.size > 500) lrcLibCache.delete(lrcLibCache.keys().next().value);
@@ -2761,22 +2798,33 @@ async function tryNeteaseOriginal(meta) {
 // CJK 用网易云补覆盖(日语等) → LrcLib 纯文本 → 非 CJK 网易云兜底 → YTM 内置纯文本。
 async function resolveLyrics(meta) {
   meta = meta || {};
+  // 歌手是占位符(Unknown Artist/未知歌手/群星…)会污染匹配：优先从标题里的 feat./ft. 抢救真正的
+  // 演出者当匹配歌手，否则当“无歌手”(仅靠歌名+时长匹配)。
+  if (isPlaceholderArtist(meta.artist)) {
+    meta = Object.assign({}, meta, { artist: featArtistFromTitle(meta.name) });
+  }
   let out = { lyric: '', source: 'empty' };
   const cjk = looksCJK(meta.name) || looksCJK(meta.artist);
-  // 1) LrcLib 优先：按 时长 匹配，时间轴与播放版本对得最准（尤其修复华语歌漂移）
-  let lrc = await fetchLrcLibLyrics({ track: meta.name, artist: meta.artist, album: meta.album, durationSec: meta.durationSec });
-  if (lrc && lrc.synced) out = { lyric: lrc.synced, source: lrc.source };
-  // 2) LrcLib 无同步歌词 → CJK 用网易云补覆盖（日语/部分华语）
-  if (!out.lyric && cjk) {
+  const lrcArgs = { track: meta.name, artist: meta.artist, album: meta.album, durationSec: meta.durationSec };
+  if (cjk) {
+    // 华语/日韩：网易云覆盖好、且在亚洲区快得多（实测 ~0.6s vs lrclib.net 每次请求约 9s）。
+    // 优先网易云原词 → 歌词几乎即时出现；网易缺了才回退 LrcLib（按时长匹配的时间轴）。
     const ne = await tryNeteaseOriginal(meta);
     if (ne) out = ne;
-  }
-  // 3) LrcLib 纯文本
-  if (!out.lyric && lrc && lrc.plain) out = { lyric: lrc.plain, source: lrc.source + '-plain' };
-  // 4) 非 CJK 也没有 → 网易云兜底（少见）
-  if (!out.lyric && !cjk) {
-    const ne = await tryNeteaseOriginal(meta);
-    if (ne) out = ne;
+    if (!out.lyric) {
+      const lrc = await fetchLrcLibLyrics(lrcArgs);
+      if (lrc && lrc.synced) out = { lyric: lrc.synced, source: lrc.source };
+      else if (lrc && lrc.plain) out = { lyric: lrc.plain, source: lrc.source + '-plain' };
+    }
+  } else {
+    // 非 CJK（欧美）：网易云基本没有，LrcLib 优先（按时长匹配，时间轴最准），网易云仅兜底。
+    const lrc = await fetchLrcLibLyrics(lrcArgs);
+    if (lrc && lrc.synced) out = { lyric: lrc.synced, source: lrc.source };
+    else if (lrc && lrc.plain) out = { lyric: lrc.plain, source: lrc.source + '-plain' };
+    if (!out.lyric) {
+      const ne = await tryNeteaseOriginal(meta);
+      if (ne) out = ne;
+    }
   }
   if (!out.lyric && meta.videoId) {
     try {
@@ -2826,21 +2874,31 @@ async function googleTranslateLines(lines, to) {
 const NETEASE_LYRIC_HEADERS = { 'User-Agent': UA, Referer: 'https://music.163.com/' };
 const neteaseTlyricCache = new Map();
 
-async function neteaseSearchSongId(query, durationSec) {
+async function neteaseSearchSongId(track, artist, durationSec) {
+  const query = (String(track || '') + ' ' + String(artist || '')).trim();
+  if (!query) return null;
   const u = new URL('https://music.163.com/api/search/get');
   u.searchParams.set('s', query);
   u.searchParams.set('type', '1');
-  u.searchParams.set('limit', '8');
+  u.searchParams.set('limit', '10');
   const body = await requestJson(u.toString(), { headers: NETEASE_LYRIC_HEADERS, timeoutMs: 5000 });
   const songs = (body && body.result && body.result.songs) || [];
   if (!songs.length) return null;
-  let best = songs[0], bestDiff = Infinity;
+  // 置信门槛：歌名必须匹配；再要求(歌手匹配 或 时长很接近≤5s)。都不满足就不采信——
+  // 宁可没有歌词，也不要配到同名的另一首歌（否则会显示完全无关的错词）。
+  let best = null, bestScore = -1;
   for (const song of songs) {
+    if (!matchKeyContains(song.name, track)) continue;
+    const artistStr = (song.artists || []).map(a => a && a.name).filter(Boolean).join(' ');
+    const artistOk = artist ? matchKeyContains(artistStr, artist) : false;
+    // 必须歌名 + 歌手都对上才采信网易——只靠“时长接近”会把同名的另一首歌（甚至别的语言）凑成错词。
+    if (!artistOk) continue;
     const durMs = Number(song.duration) || 0;
-    const diff = (durationSec > 0 && durMs) ? Math.abs(durMs / 1000 - durationSec) : 500;
-    if (diff < bestDiff) { bestDiff = diff; best = song; }
+    const durDiff = (durationSec > 0 && durMs) ? Math.abs(durMs / 1000 - durationSec) : 999;
+    const score = 10 + Math.max(0, 8 - durDiff);
+    if (score > bestScore) { bestScore = score; best = song; }
   }
-  return best && best.id;
+  return best ? best.id : null;
 }
 
 async function fetchNeteaseLyric(opts) {
@@ -2853,7 +2911,7 @@ async function fetchNeteaseLyric(opts) {
   if (neteaseTlyricCache.has(cacheKey)) return neteaseTlyricCache.get(cacheKey);
   let result = null;
   try {
-    const id = await neteaseSearchSongId((track + ' ' + artist).trim(), durationSec);
+    const id = await neteaseSearchSongId(track, artist, durationSec);
     if (id) {
       const u = new URL('https://music.163.com/api/song/lyric');
       u.searchParams.set('id', String(id));
@@ -3063,6 +3121,57 @@ async function resolveYtmAudioFormat(sid, forceRefresh) {
   const err = new Error('YTM_AUDIO_RESOLVE_FAILED: ' + failures.map(f => f.client + '=' + f.error).join(' | '));
   err.failures = failures;
   throw err;
+}
+
+// 用给定明文直链把音频代理给客户端，成功发送完毕返回 true。
+// 关键：只要还没调用 res.writeHead（即上游一开始就 4xx，如直链过期 403），失败时抛错，
+// 交给上层换一个新解析的直链重试；一旦开始流式发送就无法重试（res.headersSent 会为真）。
+async function streamYtmDirectFormat(res, fmt, range) {
+  if (range) {
+    // 播放 / 进度条 seek：客户端带 Range，单次透传
+    const up = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: range } });
+    if (up.status >= 400) throw new Error('UPSTREAM_HTTP_' + up.status);
+    const out = {
+      'Content-Type': up.headers.get('content-type') || fmt.mime,
+      'Access-Control-Allow-Origin': '*',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+    };
+    const cl = up.headers.get('content-length'); if (cl) out['Content-Length'] = cl;
+    const cr = up.headers.get('content-range');  if (cr) out['Content-Range']  = cr;
+    res.writeHead(up.status, out);
+    const reader = up.body.getReader();
+    while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
+    res.end();
+    return true;
+  }
+  // 完整下载（节奏分析等，无 Range）：分块 Range 顺序拉取绕过 Google 限速
+  const CHUNK = 1024 * 1024; // 1MB / 块
+  const total = Number(fmt.contentLength) || 0;
+  let pos = 0;
+  const firstEnd = total ? Math.min(CHUNK - 1, total - 1) : (CHUNK - 1);
+  let r = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-' + firstEnd } });
+  if (r.status >= 400) throw new Error('UPSTREAM_HTTP_' + r.status);
+  const out = {
+    'Content-Type': fmt.mime,
+    'Access-Control-Allow-Origin': '*',
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-cache',
+  };
+  if (total) out['Content-Length'] = String(total);
+  res.writeHead(200, out);
+  let buf = Buffer.from(await r.arrayBuffer());
+  res.write(buf); pos += buf.length;
+  while (total ? pos < total : buf.length >= CHUNK) {
+    const end = total ? Math.min(pos + CHUNK - 1, total - 1) : (pos + CHUNK - 1);
+    r = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=' + pos + '-' + end } });
+    if (r.status >= 400) break;
+    buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length) break;
+    res.write(buf); pos += buf.length;
+  }
+  res.end();
+  return true;
 }
 
 // ---------- Wallpaper Engine 壁纸接入（扫描 Steam 创意工坊已下载壁纸） ----------
@@ -4334,65 +4443,33 @@ const server = http.createServer(async (req, res) => {
         const sid = audioUrl.slice(4);
         const range = req.headers.range || '';
         console.log('[YTM Audio Proxy] videoId:', sid, range ? ('range=' + range) : 'full');
-        // 第一层：Metrolist 方式解析明文直链，代理转发并透传 Range，支持进度条 seek
+        // 第一层：Metrolist 方式解析明文直链，代理转发并透传 Range，支持进度条 seek。
+        // 直链有时效，过期会返回 4xx；只要还没开始发响应（res.headersSent 为假），就换一个
+        // 新解析的直链再试一次，让“临时音源失败”自动无感恢复，实在不行再落第二层 download()。
         let fmt = null;
         try {
           fmt = await resolveYtmAudioFormat(sid);
         } catch (e) {
           console.error('[YTM Audio] resolve failed:', e.message);
         }
-        if (fmt) {
+        for (let attempt = 0; fmt && attempt < 2; attempt++) {
           try {
-            if (range) {
-              // 播放 / 进度条 seek：客户端带 Range，单次透传（流式实时播放，限速无影响）
-              const up = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: range } });
-              if (up.status >= 400) throw new Error('UPSTREAM_HTTP_' + up.status);
-              const out = {
-                'Content-Type': up.headers.get('content-type') || fmt.mime,
-                'Access-Control-Allow-Origin': '*',
-                'Accept-Ranges': 'bytes',
-                'Cache-Control': 'no-cache',
-              };
-              const cl = up.headers.get('content-length'); if (cl) out['Content-Length'] = cl;
-              const cr = up.headers.get('content-range');  if (cr) out['Content-Range']  = cr;
-              res.writeHead(up.status, out);
-              const reader = up.body.getReader();
-              while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
-              res.end();
-              return;
-            }
-            // 完整下载（节奏分析等，无 Range）：Google 对无 Range 的整段下载会限速到播放速度，
-            // 导致节奏分析长时间“正在分析”。改为分块 Range 顺序拉取绕过限速，快速拿到完整音频。
-            const CHUNK = 1024 * 1024; // 1MB / 块
-            const total = Number(fmt.contentLength) || 0;
-            // 先拉第一块，成功再发响应头（便于首块失败时回退到 download()）
-            let pos = 0;
-            let firstEnd = total ? Math.min(CHUNK - 1, total - 1) : (CHUNK - 1);
-            let r = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-' + firstEnd } });
-            if (r.status >= 400) throw new Error('UPSTREAM_HTTP_' + r.status);
-            const out = {
-              'Content-Type': fmt.mime,
-              'Access-Control-Allow-Origin': '*',
-              'Accept-Ranges': 'bytes',
-              'Cache-Control': 'no-cache',
-            };
-            if (total) out['Content-Length'] = String(total);
-            res.writeHead(200, out);
-            let buf = Buffer.from(await r.arrayBuffer());
-            res.write(buf); pos += buf.length;
-            while (total ? pos < total : buf.length >= CHUNK) {
-              const end = total ? Math.min(pos + CHUNK - 1, total - 1) : (pos + CHUNK - 1);
-              r = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=' + pos + '-' + end } });
-              if (r.status >= 400) break;
-              buf = Buffer.from(await r.arrayBuffer());
-              if (!buf.length) break;
-              res.write(buf); pos += buf.length;
-            }
-            res.end();
+            await streamYtmDirectFormat(res, fmt, range);
             return;
           } catch (e) {
-            console.warn('[YTM Audio] direct proxy failed (' + fmt.client + '):', e.message, '-> fallback to download()');
+            console.warn('[YTM Audio] direct proxy failed (' + fmt.client + '):', e.message);
             ytmFormatCache.delete(sid);
+            if (res.headersSent) { try { res.end(); } catch (_) {} return; } // 已开始发送，无法重试
+            if (attempt === 0) {
+              try {
+                fmt = await resolveYtmAudioFormat(sid, true);
+                console.warn('[YTM Audio] re-resolved fresh url via', fmt.client, '-> retry');
+                continue;
+              } catch (e2) {
+                console.error('[YTM Audio] re-resolve failed:', e2.message);
+              }
+            }
+            fmt = null; // 落到 download() 兜底
           }
         }
         // 第二层兜底：youtubei.js 内部下载流（不支持 seek），默认 ANDROID_VR 客户端

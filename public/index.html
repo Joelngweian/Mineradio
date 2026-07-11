@@ -18877,6 +18877,13 @@ async function playQueueAt(idx, opts) {
     setOriginalLyricsState(initialLyricLines, false, 'fallback');
     applyPreferredLyricsForCurrent(true);
   });
+  // 歌词并行预取：与 /api/song/url 音源解析同时发出，让歌曲一响歌词基本已就绪。
+  // 保存 promise，播放前做「短封顶等待」——快源到齐再播、慢源(lrclib)超时不傻等先播后补。
+  // fetchLyric 自带 trackSwitchToken 守卫，切歌/播放失败时旧请求会被忽略，不会串轨。
+  // 播客不走此路（无逐行歌词）。
+  var lyricReadyPromise = (song && song.type !== 'podcast')
+    ? safePlaybackStep('lyric-prefetch', function(){ return fetchLyric(song, token); })
+    : null;
 
   markPlayPhase('cover-load');
   safePlaybackStep('cover-load', function(){
@@ -19011,6 +19018,13 @@ async function playQueueAt(idx, opts) {
       beatMapNextIdx = 0;
       safePlaybackStep('visual-prep-hide-chip', hideBeatChip);
     }
+    // 短封顶等待歌词就绪：快源(网易/缓存)此刻通常已好 → 歌曲一响就有词；
+    // 慢源(lrclib ~7-9s)到点(LYRIC_START_WAIT_MS)不再等，照旧先播、词随后补上，避免静音干等。
+    if (lyricReadyPromise && typeof lyricReadyPromise.then === 'function') {
+      markPlayPhase('lyric-settle-wait');
+      await Promise.race([ lyricReadyPromise, new Promise(function(r){ setTimeout(r, LYRIC_START_WAIT_MS); }) ]);
+      if (token !== trackSwitchToken) return;
+    }
     markPlayPhase('audio-start');
     var playbackStarted = await playAudio({ silent: isSpotifyPlayback });
     if (!playbackStarted) {
@@ -19041,9 +19055,13 @@ async function playQueueAt(idx, opts) {
         setOriginalLyricsState(podcastLyricLines, false, 'fallback');
         applyPreferredLyricsForCurrent(true);
       });
-    } else {
-      fetchLyric(song, token);
     }
+    // 非播客歌词已在播放开始前并行预取（见 lyric-prefetch），此处不再重复请求。
+    // 预取下一首歌词，切歌即时出词（best-effort；延后 1.2s 避免抢占当前歌加载/解码资源）。
+    safePlaybackStep('prefetch-next-lyric', function(){
+      var nextSong = playQueue[idx + 1];
+      if (nextSong) setTimeout(function(){ prefetchLyricForSong(nextSong); }, 1200);
+    });
     safeRenderQueuePanel('play-queue-at');
     scheduleShelfRebuild('play-queue-at', true);
     safePlaybackStep('shelf-preview-suppress-end', suppressShelfPreviewForPlaybackSwitch);
@@ -19502,26 +19520,59 @@ function clearPlayerControlFocusState(reason) {
 // ============================================================
 //  歌词
 // ============================================================
+// 歌词预取缓存：key = provider:id -> 后端原始响应(含 yrc/lyric)。播当前歌时顺手预取下一首，
+// 切歌即时出词。带上限防膨胀；歌词内容不变，可长期缓存。
+var lyricResponseCache = new Map();
+var LYRIC_CACHE_MAX = 40;
+// 播放前「短封顶等待歌词就绪」的上限(ms)：快源(网易/缓存)到齐再播，慢源(lrclib)超时先播后补。
+var LYRIC_START_WAIT_MS = 1200;
+function lyricCacheKey(song) {
+  if (!song) return '';
+  var provider = songProviderKey(song);
+  var id = provider === 'spotify' ? (song.spotifyId || song.id || '') : (song.id || '');
+  return id ? (provider + ':' + id) : '';
+}
+function lyricEndpointForSong(song, songOrId) {
+  var provider = songProviderKey(song);
+  if (provider === 'spotify') return '/api/spotify/lyric?id=' + encodeURIComponent(song.spotifyId || song.id || '');
+  var songId = song ? song.id : songOrId;
+  var lq = '/api/lyric?id=' + encodeURIComponent(songId);
+  if (song) {
+    // 传歌名/歌手/专辑/时长(秒)给后端 LrcLib 匹配逐行时间轴歌词
+    if (song.name) lq += '&name=' + encodeURIComponent(song.name);
+    if (song.artist) lq += '&artist=' + encodeURIComponent(song.artist);
+    if (song.album) lq += '&album=' + encodeURIComponent(song.album);
+    if (song.duration) lq += '&duration=' + encodeURIComponent(Math.round(Number(song.duration) / 1000));
+  }
+  return lq;
+}
+function cacheLyricResponse(song, r) {
+  var key = lyricCacheKey(song);
+  // 只缓存“真有歌词内容”的响应：空词多半是源瞬时失败/未命中，缓存它会让整会话都不再重试。
+  if (!key || !r || !(r.lyric || r.yrc)) return;
+  lyricResponseCache.set(key, r);
+  if (lyricResponseCache.size > LYRIC_CACHE_MAX) lyricResponseCache.delete(lyricResponseCache.keys().next().value);
+}
+// 预取：不碰 UI、不涉及 token，只把即将播放的歌的歌词提前拉进缓存。失败静默。
+async function prefetchLyricForSong(song) {
+  try {
+    if (!song || song.type === 'podcast') return;
+    var key = lyricCacheKey(song);
+    if (!key || lyricResponseCache.has(key)) return;
+    var r = await apiJson(lyricEndpointForSong(song, song));
+    cacheLyricResponse(song, r);
+  } catch (e) {}
+}
 async function fetchLyric(songOrId, token) {
   try {
     var song = (songOrId && typeof songOrId === 'object') ? songOrId : null;
-    var provider = songProviderKey(song);
-    var endpoint;
-    if (provider === 'spotify') {
-      endpoint = '/api/spotify/lyric?id=' + encodeURIComponent(song.spotifyId || song.id || '');
-    } else {
-      var songId = song ? song.id : songOrId;
-      var lq = '/api/lyric?id=' + encodeURIComponent(songId);
-      if (song) {
-        // 传歌名/歌手/专辑/时长(秒)给后端 LrcLib 匹配逐行时间轴歌词
-        if (song.name) lq += '&name=' + encodeURIComponent(song.name);
-        if (song.artist) lq += '&artist=' + encodeURIComponent(song.artist);
-        if (song.album) lq += '&album=' + encodeURIComponent(song.album);
-        if (song.duration) lq += '&duration=' + encodeURIComponent(Math.round(Number(song.duration) / 1000));
-      }
-      endpoint = lq;
+    var cacheKey = song ? lyricCacheKey(song) : '';
+    var r = (cacheKey && lyricResponseCache.has(cacheKey)) ? lyricResponseCache.get(cacheKey) : null;
+    if (!r) {
+      r = await apiJson(lyricEndpointForSong(song, songOrId));
+      if (token !== trackSwitchToken) return;
+      cacheLyricResponse(song, r);
     }
-    var r = await apiJson(endpoint);
     if (token !== trackSwitchToken) return;
     var nativeLines = parseYrcText(r.yrc || '');
     var lrcLines = parseLyricText(r.lyric || '');
