@@ -196,6 +196,11 @@ const APP_PACKAGE = readPackageInfo();
 const APP_VERSION = process.env.MINERADIO_VERSION || APP_PACKAGE.version || '0.9.11';
 const UPDATE_CONFIG = readUpdateConfig(APP_PACKAGE);
 const PATCH_MAX_BYTES = 12 * 1024 * 1024;
+const UPDATE_PROBE_BYTES = 512 * 1024;
+const UPDATE_PROBE_TIMEOUT_MS = 5000;
+const MIN_UPDATE_DOWNLOAD_SWITCH_BPS = 768 * 1024;
+const UPDATE_SLOW_SWITCH_GRACE_MS = 8000;
+const UPDATE_SLOW_SWITCH_WINDOW_MS = 6000;
 const PATCH_ALLOWED_ROOTS = new Set(['public', 'desktop', 'build']);
 const PATCH_ALLOWED_FILES = new Set(['server.js', 'dj-analyzer.js', 'package.json', 'package-lock.json']);
 const UPDATE_FALLBACK_NOTES = [
@@ -782,6 +787,63 @@ async function fetchWithTimeout(url, opts, timeoutMs) {
     clearTimeout(timer);
   }
 }
+async function probeUpdateCandidateSpeed(candidate) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_PROBE_TIMEOUT_MS);
+  const startedAt = Date.now();
+  let received = 0;
+  try {
+    const resp = await fetch(candidate.url, {
+      headers: {
+        'User-Agent': `Mineradio/${APP_VERSION}`,
+        'Range': 'bytes=0-' + (UPDATE_PROBE_BYTES - 1),
+      },
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw updateError('HTTP_' + resp.status, 'HTTP ' + resp.status);
+    if (!resp.body || !resp.body.getReader) return 0;
+    const reader = resp.body.getReader();
+    try {
+      while (received < UPDATE_PROBE_BYTES) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        received += Buffer.from(chunk.value).length;
+      }
+    } finally {
+      try { await reader.cancel(); } catch (_) {}
+    }
+    const seconds = Math.max(0.1, (Date.now() - startedAt) / 1000);
+    return received > 0 ? Math.round(received / seconds) : 0;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function prioritizeUpdateDownloadCandidates(job, candidates) {
+  const list = Array.isArray(candidates) ? candidates.filter(item => item && item.url) : [];
+  if (list.length < 2) return list;
+  job.sourceLabel = '测速选择线路';
+  job.attempt = 0;
+  job.attempts = list.length;
+  job.message = '正在测速更新线路';
+  job.updatedAt = Date.now();
+  const probed = await Promise.all(list.map(async (candidate, index) => {
+    try {
+      const probeSpeedBps = await probeUpdateCandidateSpeed(candidate);
+      return Object.assign({}, candidate, { probeSpeedBps, probeFailed: false, originalIndex: index });
+    } catch (err) {
+      return Object.assign({}, candidate, { probeSpeedBps: 0, probeFailed: true, originalIndex: index });
+    }
+  }));
+  if (!probed.some(item => item.probeSpeedBps > 0)) return list;
+  probed.sort((a, b) => b.probeSpeedBps - a.probeSpeedBps);
+  const ordered = probed.filter(item => item.probeSpeedBps > 0)
+    .concat(probed.filter(item => item.probeSpeedBps <= 0).sort((a, b) => a.originalIndex - b.originalIndex));
+  return ordered.map(item => ({
+    url: item.url,
+    label: item.label,
+    mirrored: item.mirrored,
+  }));
+}
 async function fetchTextFromCandidates(candidates, timeoutMs) {
   const list = Array.isArray(candidates) && candidates.length ? candidates : [];
   const failures = [];
@@ -1119,6 +1181,17 @@ function setUpdateJobError(job, err, fallbackMessage) {
   job.message = fallbackMessage || info.reason;
   job.updatedAt = Date.now();
 }
+function trackUpdateSlowDownload(job, now) {
+  if (!job.speedBps || job.speedBps >= MIN_UPDATE_DOWNLOAD_SWITCH_BPS) {
+    job.slowSince = 0;
+    return false;
+  }
+  if (!job.slowSince) {
+    job.slowSince = now;
+    return false;
+  }
+  return now - job.slowSince >= UPDATE_SLOW_SWITCH_WINDOW_MS;
+}
 function prepareUpdateJobAttempt(job, candidate, index, total) {
   job.status = 'downloading';
   job.sourceLabel = candidate.label || '下载线路';
@@ -1127,6 +1200,8 @@ function prepareUpdateJobAttempt(job, candidate, index, total) {
   job.received = 0;
   job.speedBps = 0;
   job.etaSeconds = 0;
+  job.slowSince = 0;
+  job.attemptStartedAt = Date.now();
   job.error = '';
   job.errorReason = '';
   job.errorDetail = '';
@@ -1139,9 +1214,10 @@ function ensureMirrorCanBeVerified(job, candidate) {
 }
 async function downloadUpdateAssetWithMirrors(job) {
   const tmpPath = job.filePath + '.download';
-  const candidates = Array.isArray(job.downloadCandidates) && job.downloadCandidates.length
+  const baseCandidates = Array.isArray(job.downloadCandidates) && job.downloadCandidates.length
     ? job.downloadCandidates
     : uniqueDownloadCandidates(job.downloadUrl || '');
+  const candidates = await prioritizeUpdateDownloadCandidates(job, baseCandidates);
   const failures = [];
   fs.mkdirSync(UPDATE_DOWNLOAD_DIR, { recursive: true });
   for (let i = 0; i < candidates.length; i++) {
@@ -1178,6 +1254,10 @@ async function downloadUpdateAssetWithMirrors(job) {
             job.speedBps = Math.round(speedWindowBytes / Math.max(0.001, (now - speedWindowAt) / 1000));
             speedWindowAt = now;
             speedWindowBytes = 0;
+            if (now - (job.attemptStartedAt || now) >= UPDATE_SLOW_SWITCH_GRACE_MS && trackUpdateSlowDownload(job, now)) {
+              try { await reader.cancel(); } catch (_) {}
+              throw updateError('UPDATE_LINE_TOO_SLOW', '当前线路速度过慢，正在切换线路');
+            }
           }
           if (job.total > 0) {
             job.progress = Math.max(1, Math.min(99, Math.round((job.received / job.total) * 100)));
