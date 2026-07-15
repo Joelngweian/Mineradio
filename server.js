@@ -31,6 +31,54 @@ async function getYTMusic(customCookie) {
   }
   return ytInstance;
 }
+function isYtmLikedPlaylistId(playlistId) {
+  const id = String(playlistId || '').trim().toUpperCase();
+  return id === 'VLLM' || id === 'LM' || id === 'YOUTUBE-LIKED';
+}
+function normalizeYtmPlaylistEditId(playlistId) {
+  const id = String(playlistId || '').trim();
+  if (!id || isYtmLikedPlaylistId(id)) return id;
+  return id.startsWith('VL') ? id.slice(2) : id;
+}
+async function likeYtmSong(yt, videoId, liked) {
+  const id = String(videoId || '').trim();
+  if (!id) throw new Error('MISSING_SONG_ID');
+  if (!yt || !yt.interact) throw new Error('YTM_INTERACTION_UNAVAILABLE');
+  try {
+    return liked ? await yt.interact.like(id) : await yt.interact.removeRating(id);
+  } catch (err) {
+    const msg = String(err && err.message || err || '');
+    if (liked && /already liked/i.test(msg)) return { already: true };
+    if (!liked && /not liked|not liked\/disliked/i.test(msg)) return { already: true };
+    throw err;
+  }
+}
+function ytmText(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (value.text) return ytmText(value.text);
+  if (value.name) return ytmText(value.name);
+  if (value.title) return ytmText(value.title);
+  if (value.simpleText) return ytmText(value.simpleText);
+  if (Array.isArray(value.runs)) return value.runs.map(r => ytmText(r && (r.text || r))).filter(Boolean).join('');
+  return '';
+}
+function ytmThumbnails(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value.thumbnails)) return value.thumbnails;
+  if (Array.isArray(value.contents)) return value.contents;
+  if (value.thumbnail) return ytmThumbnails(value.thumbnail);
+  return [];
+}
+function ytmPeople(value) {
+  const list = Array.isArray(value) ? value : (value ? [value] : []);
+  return list.map((a) => {
+    const name = ytmText(a);
+    return { id: (a && (a.channel_id || a.id || a.browse_id)) || '', name };
+  }).filter(a => a.name);
+}
 
 function mapYTMItem(item) {
   if (!item || !item.id) return null;
@@ -38,22 +86,21 @@ function mapYTMItem(item) {
   // MusicTwoRowItem 的 thumbnail 是数组；旧结构是 thumbnail.contents。取最高分辨率那张。
   let thumbs = [];
   if (item.thumbnails && item.thumbnails.length) thumbs = item.thumbnails;
-  else if (Array.isArray(item.thumbnail)) thumbs = item.thumbnail;
-  else if (item.thumbnail && Array.isArray(item.thumbnail.contents)) thumbs = item.thumbnail.contents;
+  else thumbs = ytmThumbnails(item.thumbnail);
   const cover = thumbs.length ? (thumbs[thumbs.length - 1].url || thumbs[0].url || '') : '';
-  const artistList = item.artists || item.authors || [];
-  const artistStr = artistList.map(a => a.name || String(a)).join(' / ');
+  const artistList = ytmPeople(item.artists || item.authors || item.author || item.byline);
+  const artistStr = artistList.map(a => a.name).join(' / ');
   const durationSec = item.duration ? (item.duration.seconds || 0) : 0;
-  const albumName = item.album ? (item.album.name || String(item.album)) : '';
+  const albumName = ytmText(item.album);
   return {
     provider: 'youtube',
     source: 'youtube',
     type: 'song',
     id: item.id,
-    name: item.title ? String(item.title) : (item.name ? String(item.name) : 'Unknown'),
+    name: ytmText(item.title) || ytmText(item.name) || 'Unknown',
     artist: artistStr || 'Unknown Artist',
-    artists: artistList.map(a => ({ id: a.channel_id || a.id || '', name: a.name || String(a) })),
-    artistId: artistList[0] ? (artistList[0].channel_id || artistList[0].id || '') : '',
+    artists: artistList,
+    artistId: artistList[0] ? (artistList[0].id || '') : '',
     album: albumName,
     cover: cover,
     duration: durationSec * 1000,
@@ -63,24 +110,23 @@ function mapYTMItem(item) {
 // 映射 getUpNext 电台队列里的 PlaylistPanelVideo 条目
 function mapPanelVideo(it) {
   if (!it) return null;
-  const id = it.video_id || it.videoId || '';
+  const id = it.video_id || it.videoId || it.id || '';
   if (!id) return null;
-  let thumbs = [];
-  if (Array.isArray(it.thumbnail)) thumbs = it.thumbnail;
-  else if (it.thumbnail && Array.isArray(it.thumbnail.contents)) thumbs = it.thumbnail.contents;
-  else if (it.thumbnails && it.thumbnails.length) thumbs = it.thumbnails;
+  const name = ytmText(it.title) || ytmText(it.name);
+  if (!name) return null;
+  let thumbs = it.thumbnails && it.thumbnails.length ? it.thumbnails : ytmThumbnails(it.thumbnail);
   const cover = thumbs.length ? (thumbs[thumbs.length - 1].url || thumbs[0].url || '') : '';
-  const artists = (it.artists || []).map(a => ({ id: a.channel_id || a.id || '', name: a.name || String(a) })).filter(a => a.name);
-  const artistStr = artists.length ? artists.map(a => a.name).join(' / ') : (it.author ? String(it.author) : 'Unknown Artist');
+  const artists = ytmPeople(it.artists || it.authors || it.author || it.byline);
+  const artistStr = artists.length ? artists.map(a => a.name).join(' / ') : 'Unknown Artist';
   const durSec = it.duration ? (it.duration.seconds || 0) : 0;
   return {
     provider: 'youtube', source: 'youtube', type: 'song',
     id,
-    name: it.title ? String(it.title) : 'Unknown',
+    name,
     artist: artistStr,
     artists,
     artistId: artists[0] ? artists[0].id : '',
-    album: it.album ? (it.album.name || '') : '',
+    album: ytmText(it.album),
     cover,
     duration: durSec * 1000,
     fee: 0,
@@ -1552,6 +1598,28 @@ function seededShuffle(list, seed) {
   }
   return a;
 }
+function parseCountText(text) {
+  const match = String(text || '').replace(/,/g, '').match(/(\d+)\s*(?:tracks|songs|首|支)?/i);
+  return match ? parseInt(match[1], 10) : 0;
+}
+async function countYtmPlaylistItems(yt, playlistId, limit) {
+  let page = await yt.music.getPlaylist(playlistId);
+  let total = parseCountText(page && page.info && page.info.total_items);
+  let counted = 0;
+  let guard = 0;
+  while (page && guard < 12 && counted < (limit || 1200)) {
+    const items = page.items || [];
+    counted += items.length;
+    if (!page.has_continuation) break;
+    try {
+      page = await page.getContinuation();
+      guard += 1;
+    } catch (e) {
+      break;
+    }
+  }
+  return total || counted;
+}
 async function handleDiscoverHome() {
   const info = await getLoginInfo();
   const loggedIn = !!(info && info.loggedIn);
@@ -2090,6 +2158,7 @@ async function buildWeatherRadio(params) {
 const SPOTIFY_TOKEN_URL = 'https://open.spotify.com/get_access_token?reason=transport&productType=web-player';
 const SPOTIFY_SERVER_TIME_URL = 'https://open.spotify.com/server-time';
 const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
+const SPOTIFY_SOURCE_ENABLED = process.env.MINERADIO_ENABLE_SPOTIFY === '1';
 let spotifyTokenCache = { token: '', expiresAt: 0, cookie: '' };
 const spotifyYtmMatchCache = new Map();
 
@@ -3499,6 +3568,63 @@ async function getLoginInfo() {
 // ====================================================================
 //  HTTP Server
 // ====================================================================
+function radioSongKey(song) {
+  return song && (song.id || ((song.name || '') + '|' + (song.artist || '')));
+}
+function radioNormText(text) {
+  return String(text || '').toLowerCase().replace(/[\s._()[\]{}'"|/\\:-]+/g, '');
+}
+function isPlaceholderRadioText(text) {
+  return /^(unknown|unknownartist|未知|未知歌手|variousartists)$/i.test(radioNormText(text));
+}
+function isValidRadioSong(song) {
+  return !!(song && song.id && song.name && song.artist && song.cover &&
+    !isPlaceholderRadioText(song.name) && !isPlaceholderRadioText(song.artist));
+}
+function radioSeedMatchesSong(song, title, artist) {
+  const seedTitle = radioNormText(title);
+  if (!song || !seedTitle) return false;
+  const songTitle = radioNormText(song.name);
+  if (songTitle !== seedTitle) return false;
+  const seedArtist = radioNormText(artist);
+  const songArtist = radioNormText(song.artist);
+  return !seedArtist || !songArtist || songArtist.includes(seedArtist) || seedArtist.includes(songArtist);
+}
+async function findRadioSeedBySearch(title, artist) {
+  const query = [title, artist].filter(Boolean).join(' ');
+  if (!query) return null;
+  const found = await handleSearch(query, 8);
+  return found.find(song => radioSeedMatchesSong(song, title, artist)) || found[0] || null;
+}
+async function fillRadioWithSearchFallback(songs, seen, seed, title, artist, limit) {
+  const target = Math.max(6, Math.min(Number(limit) || 18, 30));
+  if (songs.length >= target) return songs;
+  const exactQueries = [
+    [title, artist].filter(Boolean).join(' '),
+    artist ? `${artist} songs` : '',
+    title || '',
+  ].filter(Boolean);
+  const artistQueries = [
+    artist ? `${artist} songs` : '',
+    [title, artist].filter(Boolean).join(' '),
+    title || '',
+  ].filter(Boolean);
+  const queries = seed ? exactQueries : artistQueries;
+  for (const query of queries) {
+    if (songs.length >= target) break;
+    const found = await handleSearch(query, target + 6);
+    for (const song of found) {
+      const key = radioSongKey(song);
+      if (!isValidRadioSong(song) || song.id === seed || radioSeedMatchesSong(song, title, artist) || seen.has(key) || seen.has(song.id)) continue;
+      seen.add(song.id);
+      seen.add(key);
+      songs.push(song);
+      if (songs.length >= target) break;
+    }
+  }
+  return songs;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost:' + PORT);
   const pn = url.pathname;
@@ -3675,20 +3801,36 @@ const server = http.createServer(async (req, res) => {
   // ---------- 电台接续：基于某首歌的相关推荐（YTM 自动电台/Up Next） ----------
   if (pn === '/api/radio') {
     try {
-      const id = url.searchParams.get('id') || '';
-      if (!id) { sendJSON(res, { songs: [] }); return; }
-      const yt = await getYTMusic();
-      const panel = await yt.music.getUpNext(id, true);
-      const items = (panel && panel.contents) || [];
-      const seen = new Set([id]);
+      let id = url.searchParams.get('id') || '';
+      const title = url.searchParams.get('title') || '';
+      const artist = url.searchParams.get('artist') || '';
+      const limit = Math.max(6, Math.min(parseInt(url.searchParams.get('limit') || '18', 10) || 18, 30));
+      if (!id && !title && !artist) { sendJSON(res, { songs: [] }); return; }
+      if (!id && title) {
+        const seedMatch = await findRadioSeedBySearch(title, artist);
+        if (seedMatch && seedMatch.id) id = seedMatch.id;
+      }
+      let items = [];
+      if (id) {
+        try {
+          const yt = await getYTMusic();
+          const panel = await yt.music.getUpNext(id, true);
+          items = (panel && panel.contents) || [];
+        } catch (upNextErr) {
+          console.warn('[RadioUpNext]', id, upNextErr.message);
+        }
+      }
+      const seen = new Set(id ? [id] : []);
       const songs = [];
       for (const it of items) {
         const m = mapPanelVideo(it);
-        if (!m || !m.id || seen.has(m.id)) continue;
+        if (!m || !isValidRadioSong(m) || seen.has(m.id)) continue;
         seen.add(m.id);
         songs.push(m);
       }
-      sendJSON(res, { seed: id, songs });
+      if (songs.length < Math.min(6, limit)) await fillRadioWithSearchFallback(songs, seen, id, title, artist, limit);
+      console.log('[Radio]', id || '-', title || '-', '/', artist || '-', 'upNext:', items.length, 'songs:', songs.length);
+      sendJSON(res, { seed: id, songs: songs.filter(isValidRadioSong).slice(0, limit) });
     } catch (err) {
       console.error('[Radio]', err.message);
       sendJSON(res, { error: err.message, songs: [] }, 500);
@@ -3749,6 +3891,26 @@ const server = http.createServer(async (req, res) => {
       const songs = await handleSearch(kw, limit);
       sendJSON(res, { songs });
     } catch (err) { console.error('[Search]', err); sendJSON(res, { error: err.message, songs: [] }, 500); }
+    return;
+  }
+
+  if (!SPOTIFY_SOURCE_ENABLED && (pn.startsWith('/api/spotify/') || pn.startsWith('/api/auth/spotify/'))) {
+    if (pn === '/api/spotify/logout') {
+      saveSpotifyCookie('');
+      saveSpotifyOAuth(null);
+      sendJSON(res, { provider: 'spotify', ok: true, loggedIn: false, disabled: true });
+      return;
+    }
+    const base = { provider: 'spotify', disabled: true, error: 'SPOTIFY_DISABLED', message: 'Spotify source disabled; using YouTube Music only.' };
+    if (pn === '/api/spotify/login/status') { sendJSON(res, { ...base, loggedIn: false, stale: false }); return; }
+    if (pn === '/api/spotify/search') { sendJSON(res, { ...base, songs: [] }); return; }
+    if (pn === '/api/spotify/user/playlists') { sendJSON(res, { ...base, loggedIn: false, playlists: [] }); return; }
+    if (pn === '/api/spotify/playlist/tracks') { sendJSON(res, { ...base, tracks: [] }); return; }
+    if (pn === '/api/spotify/song/url') { sendJSON(res, { ...base, url: '', playable: false }); return; }
+    if (pn === '/api/spotify/lyric') { sendJSON(res, { ...base, lyric: '' }); return; }
+    if (pn === '/api/spotify/artist/detail') { sendJSON(res, { ...base, artist: null, songs: [] }); return; }
+    if (pn === '/api/spotify/song/comments') { sendJSON(res, { ...base, comments: [] }); return; }
+    sendJSON(res, { ...base, ok: false, loggedIn: false });
     return;
   }
 
@@ -4103,10 +4265,18 @@ const server = http.createServer(async (req, res) => {
               if (!browseId) continue;
               const subtitle = (pl.subtitle && pl.subtitle.text) || (typeof pl.subtitle === 'string' ? pl.subtitle : '') || '';
               if (browseId.startsWith('UC') || /artist|艺人|歌手|subscribers/i.test(subtitle)) continue;
-              const title = (pl.title && pl.title.text) || (typeof pl.title === 'string' ? pl.title : '') || 'Untitled Playlist';
-              let trackCount = 20;
+              const isLikedSongs = browseId === 'VLLM';
+              const title = isLikedSongs ? '点赞的歌曲' : ((pl.title && pl.title.text) || (typeof pl.title === 'string' ? pl.title : '') || 'Untitled Playlist');
+              let trackCount = 0;
               const tcMatch = subtitle.match(/(\d+)\s*(?:tracks|songs|首)/i);
               if (tcMatch) trackCount = parseInt(tcMatch[1], 10);
+              if (isLikedSongs) {
+                try {
+                  trackCount = await countYtmPlaylistItems(yt, browseId, 1200);
+                } catch (countErr) {
+                  console.warn('[UserPlaylists] liked songs count warning:', countErr.message);
+                }
+              }
               let cover = '';
               const thumbs = pl.thumbnail || pl.thumbnails || [];
               if (Array.isArray(thumbs) && thumbs.length > 0) cover = thumbs[thumbs.length - 1].url || '';
@@ -4166,7 +4336,14 @@ const server = http.createServer(async (req, res) => {
       const body = req.method === 'POST' ? await readRequestBody(req) : {};
       const id = body.id || url.searchParams.get('id');
       const nextLike = String(body.like != null ? body.like : (url.searchParams.get('like') || 'true')) !== 'false';
-      sendJSON(res, { loggedIn: true, id, liked: nextLike, code: 200 });
+      if (!id) { sendJSON(res, { error: 'MISSING_SONG_ID' }, 400); return; }
+      const yt = await getYTMusic();
+      if (!yt || !yt.session || !yt.session.logged_in) {
+        sendJSON(res, { error: 'LOGIN_REQUIRED', loggedIn: false }, 401);
+        return;
+      }
+      await likeYtmSong(yt, id, nextLike);
+      sendJSON(res, { loggedIn: true, id, liked: nextLike, provider: 'youtube', code: 200 });
     } catch (err) {
       sendJSON(res, { error: err.message }, 500);
     }
@@ -4176,7 +4353,25 @@ const server = http.createServer(async (req, res) => {
   // ---------- 创建歌单 ----------
   if (pn === '/api/playlist/create') {
     try {
-      sendJSON(res, { loggedIn: true, playlist: { id: 'YTM_PL_' + Date.now(), name: 'New Playlist' }, code: 200 });
+      const info = await requireLogin(res);
+      if (!info) return;
+      const body = req.method === 'POST' ? await readRequestBody(req) : {};
+      const name = String(body.name || url.searchParams.get('name') || '').trim().slice(0, 80);
+      if (!name) { sendJSON(res, { error: 'MISSING_PLAYLIST_NAME' }, 400); return; }
+      const yt = await getYTMusic();
+      if (!yt || !yt.session || !yt.session.logged_in) {
+        sendJSON(res, { error: 'LOGIN_REQUIRED', loggedIn: false }, 401);
+        return;
+      }
+      const created = await yt.playlist.create(name, []);
+      const id = created && created.playlist_id;
+      if (!id) throw new Error('CREATE_PLAYLIST_FAILED');
+      sendJSON(res, {
+        loggedIn: true,
+        code: 200,
+        success: true,
+        playlist: { id, name, cover: '', trackCount: 0, creator: info.nickname || 'YouTube Music' }
+      });
     } catch (err) {
       sendJSON(res, { error: err.message }, 500);
     }
@@ -4186,9 +4381,28 @@ const server = http.createServer(async (req, res) => {
   // ---------- 收藏歌曲到歌单 ----------
   if (pn === '/api/playlist/add-song') {
     try {
-      sendJSON(res, { loggedIn: true, code: 200, success: true });
+      const info = await requireLogin(res);
+      if (!info) return;
+      const body = req.method === 'POST' ? await readRequestBody(req) : {};
+      const pid = String(body.pid || body.playlistId || url.searchParams.get('pid') || url.searchParams.get('playlistId') || '').trim();
+      const id = String(body.id || body.videoId || url.searchParams.get('id') || url.searchParams.get('videoId') || '').trim();
+      if (!pid) { sendJSON(res, { error: 'MISSING_PLAYLIST_ID', success: false }, 400); return; }
+      if (!id) { sendJSON(res, { error: 'MISSING_SONG_ID', success: false }, 400); return; }
+      const yt = await getYTMusic();
+      if (!yt || !yt.session || !yt.session.logged_in) {
+        sendJSON(res, { error: 'LOGIN_REQUIRED', loggedIn: false, success: false }, 401);
+        return;
+      }
+      if (isYtmLikedPlaylistId(pid)) {
+        await likeYtmSong(yt, id, true);
+        sendJSON(res, { loggedIn: true, code: 200, success: true, playlistId: pid, id, liked: true });
+        return;
+      }
+      const editablePid = normalizeYtmPlaylistEditId(pid);
+      await yt.playlist.addVideos(editablePid, [id]);
+      sendJSON(res, { loggedIn: true, code: 200, success: true, playlistId: pid, editPlaylistId: editablePid, id });
     } catch (err) {
-      sendJSON(res, { error: err.message }, 500);
+      sendJSON(res, { error: err.message, success: false }, 500);
     }
     return;
   }

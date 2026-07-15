@@ -1989,7 +1989,7 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
     <div id="search-mode-tabs" class="search-mode-tabs" role="tablist" aria-label="Search mode">
       <button id="search-mode-song" class="active" type="button" onclick="setSearchMode('song')" aria-selected="true">All</button>
       <button id="search-mode-youtube" type="button" onclick="setSearchMode('youtube')" aria-selected="false">NE</button>
-      <button id="search-mode-spotify" type="button" onclick="setSearchMode('spotify')" aria-selected="false">Spotify</button>
+      <button id="search-mode-spotify" type="button" onclick="setSearchMode('spotify')" aria-selected="false" aria-hidden="true" disabled style="display:none">Spotify</button>
       <button id="search-mode-podcast" type="button" onclick="setSearchMode('podcast')" aria-selected="false">Podcast</button>
     </div>
     <div id="search-results"></div>
@@ -2092,6 +2092,13 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
           <div class="home-section-note" id="home-playlist-note">登录后在这里挑你的歌单</div>
         </div>
         <div id="home-playlist-row" class="home-pl-row"></div>
+      </div>
+      <div class="home-rail-block">
+        <div class="home-section-head">
+          <div class="home-section-title">常听推荐</div>
+          <div class="home-section-note" id="home-recommend-note">播放几首歌后按你的口味整理</div>
+        </div>
+        <div id="home-recommend-row" class="home-pl-row home-rec-row"></div>
       </div>
       <div class="home-rail-block">
         <div class="home-section-head">
@@ -2418,7 +2425,7 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
   </div>
   <div id="pl-pane" style="display:none">
     <div class="queue-toolbar">
-      <div class="queue-chip">登录后显示 YouTube Music / Spotify 歌单</div>
+      <div class="queue-chip">登录后显示 YouTube Music 歌单</div>
       <button class="fx-mini-btn ghost" onclick="refreshUserPlaylists(true)" style="height:26px;padding:0 10px;font-size:11px">刷新</button>
     </div>
     <div id="pl-list" style="margin-top:6px"></div>
@@ -2614,7 +2621,7 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
         <span class="lp-text"><span class="lp-name">YouTube Music</span><span class="lp-sub">用 Google 账号授权 · 播放与歌单同步</span></span>
         <span class="lp-go">授权登录</span>
       </button>
-      <button id="login-row-spotify" class="login-provider-row spotify" type="button" onclick="startProviderLogin('spotify')">
+      <button id="login-row-spotify" class="login-provider-row spotify" type="button" onclick="startProviderLogin('spotify')" style="display:none">
         <span class="lp-badge spotify">SP</span>
         <span class="lp-text"><span class="lp-name">Spotify</span><span class="lp-sub">用 Spotify 账号授权 · 导入歌单与收藏</span></span>
         <span class="lp-go">授权登录</span>
@@ -2646,12 +2653,12 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
     <div id="user-modal-vip" style="font-size:11px;color:rgba(255,255,255,0.5);margin-bottom:20px;letter-spacing:.5px"></div>
     <div class="user-platform-tabs" id="user-platform-tabs">
       <button id="user-provider-youtube" class="youtube active" type="button" onclick="setActiveAccountProvider('youtube')">YouTube Music</button>
-      <button id="user-provider-spotify" class="spotify" type="button" onclick="setActiveAccountProvider('spotify')">Spotify</button>
+      <button id="user-provider-spotify" class="spotify" type="button" onclick="setActiveAccountProvider('spotify')" style="display:none">Spotify</button>
     </div>
     <div class="account-modal-actions">
       <button id="account-add-youtube" class="modal-btn" onclick="openProviderLogin('youtube')">连接 Google 账号</button>
     </div>
-    <div id="account-hint" class="account-hint">可随心切换或并排连接展示 YouTube Music 与 Spotify 双平台会话。</div>
+    <div id="account-hint" class="account-hint">当前使用 YouTube Music 会话。</div>
     <div class="btn-row">
       <button class="modal-btn" onclick="closeUserModal()">关闭</button>
       <button id="account-logout-btn" class="modal-btn primary" onclick="logoutActiveAccount()">更换当前平台账号</button>
@@ -2830,6 +2837,7 @@ var playlist = [], playQueue = [], currentIdx = -1, playing = false, playToggleB
 var searchMode = 'song', podcastResults = [], podcastPrograms = [], podcastCurrentRadio = null;
 var loginStatus = { loggedIn: false, vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
 var spotifyLoginStatus = { provider: 'spotify', loggedIn: false, preview: false, nickname: 'Spotify', userId: '', avatar: '', vipType: 0 };
+var spotifySourceEnabled = false;
 var spotifyLoginAutoRefreshTimer = null;
 var spotifyLoginWasLoggedIn = false;
 var loginProvider = 'youtube';
@@ -2901,6 +2909,7 @@ var homeForcedOpen = false;
 var homeSuppressed = false;
 var homeDiscoverState = { loading: false, loaded: false, loggedIn: false, mode: 'starter', songs: [], playlists: [], podcasts: [], error: '', updatedAt: 0 };
 var homeDiscoverToken = 0;
+var homeRecommendationQueue = [];
 var homeVisualPresetActive = false;
 var homeVisualPrevPreset = 0;
 var HOME_LISTEN_STATS_KEY = 'mineradio-listen-stats-v1';
@@ -10482,6 +10491,7 @@ function normalizeBeatPrefetchState(state) {
 
 async function fetchBeatPrefetchAudioUrl(song) {
   if (!song) return null;
+  if (songProviderKey(song) === 'spotify' && !spotifySourceEnabled) return null;
   var isSpotify = songProviderKey(song) === 'spotify';
   var requestedQuality = normalizePlaybackQuality(playbackQuality);
   if (!isSpotify && requestedQuality === 'jymaster' && !hasProviderSvip('youtube', loginStatus)) requestedQuality = 'hires';
@@ -13211,6 +13221,7 @@ function makeShelfManager() {
       if (items.length) return items;
     }
     if (playQueue.length) {
+      normalizePlayQueue('shelf-current-items');
       return playQueue.map(function(song, idx){
         return { type:'queue', title: song.name, sub: song.artist || '未知歌手',
           cover: songCoverSrc(song, 360), tag: idx === currentIdx ? '正在播放' : ('#' + (idx+1)), queueIndex: idx };
@@ -13730,6 +13741,7 @@ void main(){ vec4 t = texture2D(uDotTex, gl_PointCoord); if (t.a < 0.02) discard
         }).join('||')
       ].join('::');
     }
+    if (!items) normalizePlayQueue('shelf-signature');
     items = items || playQueue.map(function(song, idx){
       return { type:'queue', title: song.name, queueIndex: idx };
     });
@@ -14592,6 +14604,7 @@ function makeContentListManager() {
       // 拉取歌单/播客集合
       var r = null;
       try {
+        if (spotifyPlaylistId && !spotifySourceEnabled) throw new Error('SPOTIFY_DISABLED');
         r = podcastCollectionKey
           ? await apiJson('/api/podcast/my/items?key=' + encodeURIComponent(podcastCollectionKey) + '&limit=36')
           : (spotifyPlaylistId
@@ -15590,13 +15603,18 @@ function finalizeListenSession(completed) {
     artist: snap.artist || '',
     cover: snap.cover || '',
     source: snap.source || '',
+    duration: snap.duration || 0,
     playedAt: now,
     listenMs: Math.round(session.listenMs),
     completed: !!completed,
     context: session.context || null,
   };
   listenStatsState.history = [record].concat((listenStatsState.history || []).filter(function(item){ return item && item.key !== record.key; })).slice(0, 180);
-  var songStat = listenStatsState.songs[record.key] || { key: record.key, name: record.name, artist: record.artist, cover: record.cover, source: record.source, plays: 0, listenMs: 0, completed: 0, lastPlayedAt: 0 };
+  var songStat = listenStatsState.songs[record.key] || { key: record.key, id: record.id, mid: record.mid, name: record.name, artist: record.artist, cover: record.cover, source: record.source, sourceKey: record.sourceKey, duration: record.duration || 0, plays: 0, listenMs: 0, completed: 0, lastPlayedAt: 0 };
+  songStat.id = record.id || songStat.id || '';
+  songStat.mid = record.mid || songStat.mid || '';
+  songStat.sourceKey = record.sourceKey || songStat.sourceKey || '';
+  songStat.duration = record.duration || songStat.duration || 0;
   songStat.name = record.name;
   songStat.artist = record.artist;
   songStat.cover = record.cover || songStat.cover || '';
@@ -15634,6 +15652,53 @@ function homeListenSummary() {
   var topArtist = topListenArtist();
   var totalPlays = Object.keys(listenStatsState.songs || {}).reduce(function(sum, key){ return sum + ((listenStatsState.songs[key] && listenStatsState.songs[key].plays) || 0); }, 0);
   return { recent: recent, topSong: topSong, topArtist: topArtist, totalPlays: totalPlays };
+}
+function topListenSongs(limit) {
+  var list = Object.keys(listenStatsState.songs || {}).map(function(key){ return listenStatsState.songs[key]; });
+  list.sort(function(a, b){ return (b.plays - a.plays) || (b.listenMs - a.listenMs) || (b.lastPlayedAt - a.lastPlayedAt); });
+  return list.slice(0, limit || 8);
+}
+function listenRecordToSong(record) {
+  if (!record || !record.id) return null;
+  var provider = /spotify/i.test(String(record.source || record.sourceKey || record.provider || '')) ? 'spotify' : 'youtube';
+  return {
+    provider: provider,
+    source: provider,
+    type: 'song',
+    id: record.id,
+    mid: record.mid || record.id,
+    name: record.name || '未知歌曲',
+    artist: record.artist || '',
+    cover: record.cover || '',
+    duration: Number(record.duration) || 0
+  };
+}
+function homePersonalRecommendations() {
+  var seen = {};
+  var out = [];
+  var history = (listenStatsState.history || []).slice(0, 12);
+  var topSongs = topListenSongs(10);
+  var topArtists = Object.keys(listenStatsState.artists || {}).map(function(key){ return listenStatsState.artists[key]; })
+    .sort(function(a, b){ return (b.plays - a.plays) || (b.listenMs - a.listenMs) || (b.lastPlayedAt - a.lastPlayedAt); })
+    .slice(0, 4)
+    .map(function(item){ return normalizeArtistNameForMatch(item.name); })
+    .filter(Boolean);
+  function push(song) {
+    song = song && cloneSong(song);
+    var key = queueItemKey(song);
+    if (!song || !key || seen[key]) return;
+    seen[key] = true;
+    out.push(song);
+  }
+  (homeDiscoverState.songs || []).slice().sort(function(a, b){
+    var aa = normalizeArtistNameForMatch(a && a.artist);
+    var bb = normalizeArtistNameForMatch(b && b.artist);
+    var as = topArtists.some(function(name){ return aa && (aa.indexOf(name) >= 0 || name.indexOf(aa) >= 0); }) ? 1 : 0;
+    var bs = topArtists.some(function(name){ return bb && (bb.indexOf(name) >= 0 || name.indexOf(bb) >= 0); }) ? 1 : 0;
+    return bs - as;
+  }).forEach(push);
+  topSongs.concat(history).forEach(function(record){ push(listenRecordToSong(record)); });
+  return out.slice(0, 10);
 }
 var homeNowClockTimer = null;
 var HOME_NOW_WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -15926,6 +15991,34 @@ function renderHomePlaylistPicker() {
     '</button>';
   }).join('');
 }
+function renderHomeRecommendations() {
+  var row = document.getElementById('home-recommend-row');
+  var note = document.getElementById('home-recommend-note');
+  if (!row) return;
+  var recommendations = homePersonalRecommendations();
+  homeRecommendationQueue = recommendations;
+  var hasHistory = !!((listenStatsState.history || []).length || Object.keys(listenStatsState.songs || {}).length);
+  if (note) {
+    if (recommendations.length) {
+      note.textContent = hasHistory ? '根据最近和常听歌曲整理' : '先用今日推荐垫一组';
+    } else {
+      note.textContent = '播放几首歌后按你的口味整理';
+    }
+  }
+  if (!recommendations.length) {
+    row.innerHTML = '<div class="home-pl-empty">播放几首歌后生成推荐</div>';
+    return;
+  }
+  row.innerHTML = recommendations.map(function(song, i){
+    var cover = songCoverSrc(song, 220);
+    var sub = song.artist || songSourceLabel(song) || '推荐歌曲';
+    return '<button class="home-pl-card home-rec-card" type="button" onclick="playHomeRecommendation(' + i + ')" title="' + escHtml(song.name || '') + '">' +
+      '<div class="home-pl-cover' + (cover ? ' has-cover' : '') + '"' + (cover ? ' style="background-image:url(\'' + cssImageUrl(cover) + '\')"' : '') + '></div>' +
+      '<div class="home-pl-name">' + escHtml(song.name || '推荐歌曲') + '</div>' +
+      '<div class="home-pl-sub">' + escHtml(sub) + '</div>' +
+    '</button>';
+  }).join('');
+}
 function renderHomeDiscover() {
   renderHomeNowScreen();
   var sub = document.getElementById('home-subtitle');
@@ -15973,7 +16066,7 @@ function renderHomeDiscover() {
   var profileSub = document.getElementById('home-profile-sub');
   var libTitle = document.getElementById('home-library-title');
   var libSub = document.getElementById('home-library-sub');
-  if (weatherCardTitle) weatherCardTitle.textContent = '我的歌单';
+  if (weatherCardTitle) weatherCardTitle.textContent = playlistItem ? (playlistItem.name || '我的歌单') : '我的歌单';
   if (weatherCardSub) {
     weatherCardSub.textContent = playlistItem ? (((playlistItem.trackCount || 0) ? playlistItem.trackCount + ' 首 · ' : '') + (playlistItem.creator || '打开左侧歌单库')) : '打开左侧歌单库';
   }
@@ -16011,6 +16104,7 @@ function renderHomeDiscover() {
   }
   renderHomeTiles();
   renderHomePlaylistPicker();
+  renderHomeRecommendations();
 }
 async function loadHomeDiscover(force) {
   if (homeDiscoverState.loading) return;
@@ -16471,6 +16565,19 @@ function playHomeSong(index) {
   forcePlaybackControlsInteractive();
   playQueueAt(currentIdx).catch(function(e){ console.warn('[HomeSongPlay]', e); });
 }
+function playHomeRecommendation(index) {
+  homeForcedOpen = false;
+  homeSuppressed = false;
+  setHomeControlsLocked(false);
+  var list = (homeRecommendationQueue && homeRecommendationQueue.length ? homeRecommendationQueue : homePersonalRecommendations()).map(cloneSong);
+  if (!list.length) { playHomeDaily(); return; }
+  playQueue = list;
+  currentIdx = Math.max(0, Math.min(playQueue.length - 1, Number(index) || 0));
+  safeRenderQueuePanel('home-recommendation');
+  safeShelfRebuild('home-recommendation', true);
+  forcePlaybackControlsInteractive();
+  playQueueAt(currentIdx).catch(function(e){ console.warn('[HomeRecommendationPlay]', e); });
+}
 function openHomePlaylist(index) {
   homeForcedOpen = false;
   homeSuppressed = false;
@@ -16846,7 +16953,7 @@ function openTrackDetailModal(type, songOverride) {
   var seq = ++trackDetailSeq;
   if (type === 'artist') {
     var artistId = currentArtistId(song);
-    var spotifyArtistId = currentSpotifyArtistId(song);
+    var spotifyArtistId = spotifySourceEnabled ? currentSpotifyArtistId(song) : '';
     var artistDetailUrl = artistId
       ? ('/api/artist/detail?id=' + encodeURIComponent(artistId) + '&limit=36')
       : (spotifyArtistId ? ('/api/spotify/artist/detail?id=' + encodeURIComponent(spotifyArtistId) + '&limit=36') : '');
@@ -16854,10 +16961,10 @@ function openTrackDetailModal(type, songOverride) {
     var artistNamesForMatch = artists.length ? artists : (song.artist ? [song.artist] : []);
     var artistInitial = artistName && artistName !== '未知歌手' ? artistName.slice(0, 1) : '歌';
     var artistCoverHtml = '<div id="artist-detail-cover" class="detail-cover detail-artist-avatar">' + escHtml(artistInitial) + '</div>';
-    var artistEmptyText = songProviderKey(song) === 'spotify'
+    var artistEmptyText = spotifySourceEnabled && songProviderKey(song) === 'spotify'
       ? '当前 Spotify 歌曲缺少歌手 ID，无法打开 Spotify 歌手主页。'
       : '当前歌曲缺少可用的歌手主页信息';
-    var artistLoadingText = songProviderKey(song) === 'spotify' ? '正在载入 Spotify 歌手主页...' : '正在载入歌手主页...';
+    var artistLoadingText = spotifySourceEnabled && songProviderKey(song) === 'spotify' ? '正在载入 Spotify 歌手主页...' : '正在载入歌手主页...';
     heading.textContent = '歌手详情';
     body.innerHTML =
       '<div class="detail-hero">' + artistCoverHtml +
@@ -16905,7 +17012,7 @@ function openTrackDetailModal(type, songOverride) {
     }
   } else {
     heading.textContent = '歌曲详情';
-    var detailIsSpotify = songProviderKey(song) === 'spotify';
+    var detailIsSpotify = spotifySourceEnabled && songProviderKey(song) === 'spotify';
     var detailCanLoadComments = isCloudSong(song) || detailIsSpotify;
     var detailCommentTitle = detailIsSpotify ? 'Spotify 评论' : 'YouTube 评论';
     var detailEmptyText = detailIsSpotify ? '当前 Spotify 歌曲暂无评论' : '本地文件暂无 YouTube 评论';
@@ -16967,11 +17074,7 @@ function openArtistDetailForSong(song) {
   }
 }
 function resolveArtistSongForDetail(song, artist) {
-  var provider = songProviderKey(song) === 'spotify' ? 'spotify' : 'youtube';
-  var url = provider === 'spotify'
-    ? '/api/spotify/search?keywords=' + encodeURIComponent(artist) + '&limit=8'
-    : '/api/search?keywords=' + encodeURIComponent(artist) + '&limit=10';
-  return apiJson(url).then(function(r){
+  return apiJson('/api/search?keywords=' + encodeURIComponent(artist) + '&limit=10').then(function(r){
     var songs = (r && r.songs) || [];
     for (var i = 0; i < songs.length; i++) {
       var candidate = songs[i];
@@ -17555,7 +17658,11 @@ async function createPlaylistFromCollect() {
   var name = input ? input.value.trim() : '';
   if (!name) { showToast('先输入歌单名称'); return; }
   try {
-    var r = await apiJson('/api/playlist/create?name=' + encodeURIComponent(name));
+    var r = await apiJson('/api/playlist/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name })
+    });
     if (r && r.error) throw new Error(r.error);
     if (input) input.value = '';
     showToast('歌单已创建');
@@ -17729,8 +17836,9 @@ function updateSearchModeTabs() {
     youtubeBtn.setAttribute('aria-selected', searchMode === 'youtube' ? 'true' : 'false');
   }
   if (spotifyBtn) {
-    spotifyBtn.classList.toggle('active', searchMode === 'spotify');
-    spotifyBtn.setAttribute('aria-selected', searchMode === 'spotify' ? 'true' : 'false');
+    spotifyBtn.style.display = spotifySourceEnabled ? '' : 'none';
+    spotifyBtn.classList.toggle('active', spotifySourceEnabled && searchMode === 'spotify');
+    spotifyBtn.setAttribute('aria-selected', spotifySourceEnabled && searchMode === 'spotify' ? 'true' : 'false');
   }
   if (podcastBtn) {
     podcastBtn.classList.toggle('active', searchMode === 'podcast');
@@ -17739,12 +17847,12 @@ function updateSearchModeTabs() {
   if ($input) {
     $input.placeholder = searchMode === 'podcast'
       ? '搜索播客、电台...'
-      : (searchMode === 'spotify' ? '搜索 Spotify...' : (searchMode === 'youtube' ? '搜索 YouTube Music...' : '搜索歌曲、歌手...'));
+      : (spotifySourceEnabled && searchMode === 'spotify' ? '搜索 Spotify...' : (searchMode === 'youtube' ? '搜索 YouTube Music...' : '搜索歌曲、歌手...'));
   }
   requestAnimationFrame(updateSearchPillGlassDisplacementMap);
 }
 function setSearchMode(mode) {
-  mode = (mode === 'podcast' || mode === 'youtube' || mode === 'spotify') ? mode : 'song';
+  mode = (mode === 'podcast' || mode === 'youtube') ? mode : 'song';
   if (searchMode === mode) return;
   searchMode = mode;
   updateSearchModeTabs();
@@ -18098,22 +18206,8 @@ function mergeSongSearchResults(youtubeSongs, spotifySongs, limit, q) {
   return out.slice(0, limit);
 }
 async function fetchMusicSearchResults(q, mode) {
-  if (mode === 'spotify') {
-    var spotifyOnly = await apiJson('/api/spotify/search?keywords=' + encodeURIComponent(q) + '&limit=12');
-    return mergeSongSearchResults([], spotifyOnly.songs || [], 18, q);
-  }
-  if (mode === 'youtube') {
-    var neOnly = await apiJson('/api/search?keywords=' + encodeURIComponent(q) + '&limit=18');
-    return mergeSongSearchResults(neOnly.songs || [], [], 18, q);
-  }
-  var result = await Promise.allSettled([
-    apiJson('/api/search?keywords=' + encodeURIComponent(q) + '&limit=14'),
-    apiJson('/api/spotify/search?keywords=' + encodeURIComponent(q) + '&limit=12')
-  ]);
-  var youtubeSongs = result[0].status === 'fulfilled' ? ((result[0].value && result[0].value.songs) || []) : [];
-  var spotifySongs = result[1].status === 'fulfilled' ? ((result[1].value && result[1].value.songs) || []) : [];
-  if (result[1].status === 'rejected') console.warn('Spotify search failed:', result[1].reason);
-  return mergeSongSearchResults(youtubeSongs, spotifySongs, 18, q);
+  var ytm = await apiJson('/api/search?keywords=' + encodeURIComponent(q) + '&limit=18');
+  return mergeSongSearchResults((ytm && ytm.songs) || [], [], 18, q);
 }
 function renderSongSearchResults(songs) {
   playlist = songs || [];
@@ -18502,9 +18596,129 @@ function queueItemKey(song) {
   if (song.id != null && song.id !== '') return 'song:' + song.id;
   return String(song.name || '') + '|' + String(song.artist || '');
 }
+function queueTextKey(text) {
+  return String(text || '').trim().toLowerCase().replace(/[\s._()[\]{}'"|/\\:-]+/g, '');
+}
+function isPlaceholderQueueText(text) {
+  return /^(unknown|unknownartist|variousartists|artist|loading|加载中|正在载入|未知|未知歌曲|未知歌手|未知艺术家|群星)$/.test(queueTextKey(text));
+}
+function isValidQueueSong(song) {
+  if (!song || typeof song !== 'object') return false;
+  var name = String(song.name || song.title || '').trim();
+  if (!name || isPlaceholderQueueText(name)) return false;
+  if (song.type === 'local' || song.source === 'local') return !!(song.localKey || song.url || song.filePath || song.path);
+  if (song.type === 'podcast' || song.source === 'podcast') return !!(song.programId || song.id);
+  var artist = String(song.artist || '').trim();
+  if (!artist || isPlaceholderQueueText(artist)) return false;
+  if (!(song.id || song.mid || song.videoId)) return false;
+  if (!(song.cover || song.pic || song.albumCover || song.customCover)) return false;
+  return true;
+}
+function normalizePlayQueue(reason) {
+  if (!Array.isArray(playQueue)) {
+    playQueue = [];
+    currentIdx = -1;
+    return true;
+  }
+  var before = playQueue.length;
+  if (!before) {
+    currentIdx = -1;
+    return false;
+  }
+  var currentKey = currentIdx >= 0 && playQueue[currentIdx] ? queueItemKey(playQueue[currentIdx]) : '';
+  var removedBeforeCurrent = 0;
+  playQueue = playQueue.filter(function(song, index){
+    var ok = isValidQueueSong(song);
+    if (!ok && index < currentIdx) removedBeforeCurrent++;
+    return ok;
+  });
+  if (playQueue.length !== before) {
+    if (!playQueue.length) currentIdx = -1;
+    else if (currentKey) {
+      var found = -1;
+      for (var i = 0; i < playQueue.length; i++) {
+        if (queueItemKey(playQueue[i]) === currentKey) { found = i; break; }
+      }
+      currentIdx = found >= 0 ? found : Math.max(0, Math.min(playQueue.length - 1, currentIdx - removedBeforeCurrent));
+    } else {
+      currentIdx = Math.max(0, Math.min(playQueue.length - 1, currentIdx - removedBeforeCurrent));
+    }
+    console.warn('[Queue] dropped invalid items:', before - playQueue.length, reason || '');
+    return true;
+  }
+  if (currentIdx >= playQueue.length) currentIdx = playQueue.length - 1;
+  return false;
+}
+function sameQueueSeedSong(a, b) {
+  if (!a || !b) return false;
+  var ak = queueItemKey(a);
+  var bk = queueItemKey(b);
+  if (ak && bk && ak === bk) return true;
+  var at = queueTextKey(a.name || a.title);
+  var bt = queueTextKey(b.name || b.title);
+  if (!at || !bt || at !== bt) return false;
+  var aa = queueTextKey(a.artist);
+  var ba = queueTextKey(b.artist);
+  return !aa || !ba || aa.indexOf(ba) >= 0 || ba.indexOf(aa) >= 0;
+}
+function findQueueSeedIndex(seedSong) {
+  if (!Array.isArray(playQueue) || !seedSong) return -1;
+  if (currentIdx >= 0 && currentIdx < playQueue.length && sameQueueSeedSong(playQueue[currentIdx], seedSong)) return currentIdx;
+  for (var i = 0; i < playQueue.length; i++) {
+    if (sameQueueSeedSong(playQueue[i], seedSong)) return i;
+  }
+  return -1;
+}
+function radioRecommendationKey(song) {
+  if (!song) return '';
+  var id = song.id || song.mid || song.videoId || song.songmid;
+  if (id) return songProviderKey(song) + ':' + id;
+  return queueItemKey(song);
+}
+function queueHasRecommendationAfterSeed(seedSong) {
+  var seedIndex = findQueueSeedIndex(seedSong);
+  return seedIndex >= 0 && playQueue.length > seedIndex + 1;
+}
+function applyRadioRecommendations(seedSong, recs, opts) {
+  opts = opts || {};
+  normalizePlayQueue(opts.reason || 'radio-apply');
+  if (!Array.isArray(recs) || !recs.length) return 0;
+  var seedIndex = findQueueSeedIndex(seedSong);
+  if (seedIndex < 0) {
+    console.warn('[Radio] seed no longer in queue:', seedSong && seedSong.name);
+    return 0;
+  }
+  if (opts.requireCurrent !== false && !sameQueueSeedSong(playQueue[currentIdx], seedSong)) return 0;
+  var existing = {};
+  playQueue.forEach(function(s){
+    var key = radioRecommendationKey(s);
+    if (key) existing[key] = true;
+    var qk = queueItemKey(s);
+    if (qk) existing[qk] = true;
+  });
+  var additions = [];
+  recs.forEach(function(s){
+    if (!isValidQueueSong(s) || sameQueueSeedSong(seedSong, s)) return;
+    var key = radioRecommendationKey(s);
+    var qk = queueItemKey(s);
+    if ((key && existing[key]) || (qk && existing[qk])) return;
+    if (key) existing[key] = true;
+    if (qk) existing[qk] = true;
+    additions.push(hydrateCustomCover(s));
+  });
+  if (!additions.length) return 0;
+  if (opts.replaceTail) playQueue.splice.apply(playQueue, [seedIndex + 1, playQueue.length - seedIndex - 1].concat(additions));
+  else playQueue.splice.apply(playQueue, [seedIndex + 1, 0].concat(additions));
+  radioSeedId = seedSong && seedSong.id ? seedSong.id : radioSeedId;
+  safeRenderQueuePanel(opts.reason || 'radio-apply');
+  safeShelfRebuild(opts.reason || 'radio-apply');
+  console.log('[Radio] applied recommendations:', additions.length, opts.reason || '');
+  return additions.length;
+}
 function queueSong(song, opts) {
   opts = opts || {};
-  if (!song) return -1;
+  if (!isValidQueueSong(song)) return -1;
+  normalizePlayQueue('queue-song-before');
   var cloned = cloneSong(song);
   var insertAt = playQueue.length;
   if (opts.position === 'next') {
@@ -18567,20 +18781,22 @@ function moveQueueIndexToTop(idx) {
 }
 function playSearchResult(i) {
   var song = playlist[i]; if (!song) return;
+  if (!isValidQueueSong(song)) {
+    showToast('这条搜索结果缺少歌曲信息，已跳过');
+    return;
+  }
   homeForcedOpen = false;
   homeSuppressed = false;
   setHomeControlsLocked(false);
-  if (!playQueue.length) { playQueue.unshift(cloneSong(song)); currentIdx = 0; }
-  else {
-    var matchIdx = -1;
-    var targetKey = queueItemKey(song);
-    for (var j = 0; j < playQueue.length; j++) if (queueItemKey(playQueue[j]) === targetKey) { matchIdx = j; break; }
-    if (matchIdx >= 0) currentIdx = moveQueueIndexToTop(matchIdx);
-    else { playQueue.unshift(cloneSong(song)); currentIdx = 0; }
-  }
+  var seedSong = cloneSong(song);
+  playQueue = [seedSong];
+  currentIdx = 0;
   $results.classList.remove('show');
   $input.value = ''; $input.blur();
+  safeRenderQueuePanel('search-seed');
+  safeShelfRebuild('search-seed', true);
   playQueueAt(currentIdx);
+  primeQueueWithSeedRadio(seedSong);
 }
 var firstPlayDone = false;
 
@@ -18667,16 +18883,14 @@ function isSameTitleArtist(source, candidate) {
   return a.some(function(name){ return b.indexOf(name) >= 0; });
 }
 function alternatePlaybackProvider(song) {
-  return songProviderKey(song) === 'spotify' ? 'youtube' : 'spotify';
+  return 'youtube';
 }
 async function searchAlternatePlatformSong(song) {
   var target = alternatePlaybackProvider(song);
   var artist = artistNameParts(song)[0] || '';
   var query = [song.name || song.title || '', song.artist || artist].filter(Boolean).join(' ').trim();
   if (!query) return null;
-  var url = target === 'spotify'
-    ? '/api/spotify/search?keywords=' + encodeURIComponent(query) + '&limit=8'
-    : '/api/search?keywords=' + encodeURIComponent(query) + '&limit=12';
+  var url = '/api/search?keywords=' + encodeURIComponent(query) + '&limit=12';
   var data = await apiJson(url);
   var list = data && (data.songs || data.result || []);
   for (var i = 0; i < list.length; i++) {
@@ -18827,6 +19041,7 @@ function scheduleAudioResumePosition(media, seconds, token) {
 
 async function playQueueAt(idx, opts) {
   opts = opts || {};
+  normalizePlayQueue('play-queue-at');
   if (idx < 0 || idx >= playQueue.length) return;
   markRenderInteraction('track-switch', 1500);
   var playPhase = 'start';
@@ -18849,6 +19064,17 @@ async function playQueueAt(idx, opts) {
   markPlayPhase('track-setup');
   var song = safePlaybackStep('hydrate-song', function(){ return hydrateCustomCover(playQueue[idx]); }) || playQueue[idx];
   playQueue[idx] = song;
+  if (songProviderKey(song) === 'spotify' && !spotifySourceEnabled) {
+    markPlayPhase('youtube-rematch');
+    var youtubeMatch = await searchAlternatePlatformSong(song);
+    if (token !== trackSwitchToken) return;
+    if (!youtubeMatch) {
+      showToast('Spotify 源已关闭，未找到 YouTube Music 版本');
+      return;
+    }
+    song = hydrateCustomCover(youtubeMatch);
+    playQueue[idx] = song;
+  }
   var playbackContext = opts.context || (song && song.radioContext) || null;
   activeRadioContext = playbackContext || null;
   safeRenderQueuePanel('play-queue-at-switch', { scrollCurrent: miniQueueOpen });
@@ -19174,6 +19400,52 @@ function setPlayIcon(p) {
 var radioAutoplayOn = true;      // 电台接续：队列见底时自动续推荐（默认开）
 var radioFetching = false;
 var radioSeedId = '';
+var radioPrimeSerial = 0;
+function scheduleRadioPrimeRetry(song, serial, attempt) {
+  attempt = Number(attempt) || 0;
+  if (attempt >= 3 || !song) return;
+  var delay = [700, 1800, 3600][attempt] || 3600;
+  setTimeout(function(){
+    if (serial !== radioPrimeSerial) return;
+    if (!sameQueueSeedSong(playQueue[currentIdx], song)) return;
+    if (queueHasRecommendationAfterSeed(song)) return;
+    primeQueueWithSeedRadio(song, attempt + 1);
+  }, delay);
+}
+function isUsefulRadioSong(song) {
+  if (!song || !song.id || !song.name || !song.artist || !song.cover) return false;
+  var name = String(song.name || '').trim().toLowerCase();
+  var artist = String(song.artist || '').trim().toLowerCase();
+  return !/^(unknown|未知|未知歌曲)$/.test(name) && !/^(unknown artist|unknown|未知|未知歌手)$/.test(artist);
+}
+async function fetchRadioSongsForSeed(song) {
+  if (!radioAutoplayOn || !song) return [];
+  if (song.type === 'podcast' || song.type === 'local' || song.source === 'local') return [];
+  var seed = songProviderKey(song) === 'youtube' ? (song.id || '') : '';
+  var title = song.name || '';
+  var artist = song.artist || '';
+  if (!seed && !title) return [];
+  var params = [];
+  if (seed) params.push('id=' + encodeURIComponent(seed));
+  params.push('title=' + encodeURIComponent(title));
+  params.push('artist=' + encodeURIComponent(artist));
+  params.push('limit=18');
+  var r = await apiJson('/api/radio?' + params.join('&'));
+  return ((r && r.songs) || []).filter(isUsefulRadioSong);
+}
+async function primeQueueWithSeedRadio(song, attempt) {
+  attempt = Number(attempt) || 0;
+  var serial = ++radioPrimeSerial;
+  try {
+    var recs = await fetchRadioSongsForSeed(song);
+    if (serial !== radioPrimeSerial && !sameQueueSeedSong(playQueue[currentIdx], song)) return;
+    var added = applyRadioRecommendations(song, recs, { replaceTail: true, requireCurrent: true, reason: 'radio-prime' });
+    if (!added) scheduleRadioPrimeRetry(song, serial, attempt);
+  } catch (e) {
+    console.warn('[Radio] prime failed:', e && e.message);
+    scheduleRadioPrimeRetry(song, serial, attempt);
+  }
+}
 // 当前歌是队列最后一首且是 YTM 歌时，后台拉「接下来」推荐去重追加，实现无限接续
 async function maybeExtendQueueWithRadio(song) {
   if (!radioAutoplayOn || radioFetching || !song) return;
@@ -19184,24 +19456,9 @@ async function maybeExtendQueueWithRadio(song) {
   if (!seed || radioSeedId === seed) return;          // 同一颗种子不重复拉
   radioFetching = true;
   try {
-    var r = await apiJson('/api/radio?id=' + encodeURIComponent(seed));
-    var recs = (r && r.songs) || [];
-    if (!recs.length) { radioSeedId = seed; return; }
-    var existing = {};
-    playQueue.forEach(function(s){ existing[songProviderKey(s) + ':' + (s.id || s.name)] = true; });
-    var added = 0;
-    recs.forEach(function(s){
-      var k = songProviderKey(s) + ':' + (s.id || s.name);
-      if (existing[k]) return;
-      existing[k] = true;
-      playQueue.push(hydrateCustomCover(s));
-      added++;
-    });
-    radioSeedId = seed;
-    if (added) {
-      safeRenderQueuePanel('radio-extend');
-      safeShelfRebuild('radio-extend');
-    }
+    var recs = await fetchRadioSongsForSeed(song);
+    var added = applyRadioRecommendations(song, recs, { replaceTail: false, requireCurrent: true, reason: 'radio-extend' });
+    if (added) radioSeedId = seed;
   } catch (e) {
     console.warn('[Radio] extend failed:', e && e.message);
   } finally {
@@ -19534,7 +19791,7 @@ function lyricCacheKey(song) {
 }
 function lyricEndpointForSong(song, songOrId) {
   var provider = songProviderKey(song);
-  if (provider === 'spotify') return '/api/spotify/lyric?id=' + encodeURIComponent(song.spotifyId || song.id || '');
+  if (provider === 'spotify' && spotifySourceEnabled) return '/api/spotify/lyric?id=' + encodeURIComponent(song.spotifyId || song.id || '');
   var songId = song ? song.id : songOrId;
   var lq = '/api/lyric?id=' + encodeURIComponent(songId);
   if (song) {
@@ -19906,6 +20163,7 @@ function renderMiniQueuePanel(opts) {
   var $list = document.getElementById('mini-queue-list');
   var $count = document.getElementById('mini-queue-count');
   if (!$list || !$count) return;
+  normalizePlayQueue('render-mini-queue');
   var total = playQueue.length;
   $count.textContent = total ? (total + ' 首' + (currentIdx >= 0 ? ' · 正在播放 ' + (currentIdx + 1) : '')) : '0 首';
   if (!miniQueueOpen && !opts.animate && !opts.scrollCurrent) return;
@@ -19940,6 +20198,7 @@ function renderQueuePanel(opts) {
   opts = opts || {};
   var $ql = document.getElementById('queue-list');
   var seq = ++queueRenderSeq;
+  normalizePlayQueue('render-queue-panel');
   if (!playQueue.length) {
     $ql.innerHTML = '<div style="text-align:center;padding:24px 0;color:rgba(255,255,255,.32);font-size:11.5px">队列为空，搜索后点 + 设为下一首</div>';
     renderMiniQueuePanel();
@@ -19965,7 +20224,7 @@ function renderQueuePanel(opts) {
   renderMiniQueuePanel({ scrollCurrent: miniQueueOpen });
 }
 async function refreshUserPlaylists(force) {
-  if (!loginStatus.loggedIn && !spotifyLoginStatus.loggedIn) {
+  if (!loginStatus.loggedIn) {
     resetPlaylistPanelRenderLimit();
     document.getElementById('pl-list').innerHTML = '<div style="text-align:center;padding:24px 0;color:rgba(255,255,255,.32);font-size:11.5px">登录后显示个人歌单</div>';
     var podcastListLoggedOut = document.getElementById('podcast-list');
@@ -19973,9 +20232,7 @@ async function refreshUserPlaylists(force) {
     return;
   }
   if (force) resetPlaylistPanelRenderLimit();
-  var hasCachedSpotifyPlaylists = userPlaylists.some(function(pl){ return pl && pl.provider === 'spotify'; });
-  var needsSpotifyRefresh = spotifyLoginStatus.loggedIn && !hasCachedSpotifyPlaylists;
-  if (!force && !needsSpotifyRefresh && (userPlaylists.length || myPodcastCollections.length)) {
+  if (!force && (userPlaylists.length || myPodcastCollections.length)) {
     var cachedAnimate = isPlaylistPanelVisibleForRender();
     renderUserPlaylistsList({ animate: cachedAnimate });
     renderMyPodcastCollections({ animate: cachedAnimate });
@@ -19991,12 +20248,11 @@ async function refreshUserPlaylists(force) {
   try {
     var result = await Promise.all([
       loginStatus.loggedIn ? apiJson('/api/user/playlists') : Promise.resolve({ playlists: [] }),
-      loginStatus.loggedIn ? apiJson('/api/podcast/my') : Promise.resolve({ collections: [], loggedIn: false }),
-      spotifyLoginStatus.loggedIn ? apiJson('/api/spotify/user/playlists') : Promise.resolve({ playlists: [] })
+      loginStatus.loggedIn ? apiJson('/api/podcast/my') : Promise.resolve({ collections: [], loggedIn: false })
     ]);
     var youtubeLists = (result[0].playlists || []).map(function(pl){ pl.provider = 'youtube'; pl.source = 'youtube'; return pl; });
-    spotifyPlaylists = (result[2].playlists || []).map(function(pl){ pl.provider = 'spotify'; pl.source = 'spotify'; return pl; });
-    userPlaylists = youtubeLists.concat(spotifyPlaylists);
+    spotifyPlaylists = [];
+    userPlaylists = youtubeLists;
     myPodcastCollections = result[1].collections || [];
     var animatePanel = isPlaylistPanelVisibleForRender();
     renderUserPlaylistsList({ animate: animatePanel, reset: true });
@@ -20078,6 +20334,10 @@ function scrollPlaylistPanelDetailIntoView(key) {
 async function openPlaylistPanelDetail(provider, pid, title) {
   if (!pid) return;
   provider = provider === 'spotify' ? 'spotify' : 'youtube';
+  if (provider === 'spotify' && !spotifySourceEnabled) {
+    showToast('Spotify 源已关闭，当前只使用 YouTube Music');
+    return;
+  }
   var key = playlistPanelKey(provider, pid);
   var pl = userPlaylists.find(function(item){ return playlistPanelKey(item.provider === 'spotify' ? 'spotify' : 'youtube', item.id) === key; }) || { id: pid, provider: provider, name: title || '歌单详情' };
   if (playlistPanelDetailState.key === key && !playlistPanelDetailState.loading && playlistPanelDetailState.tracks.length) {
@@ -20389,6 +20649,11 @@ async function loadPlaylistIntoQueueById(id, autoplay, title) {
   updateEmptyHomeVisibility();
   showLoading();
   var spotifyPlaylistId = String(id || '').indexOf('spotify:') === 0 ? String(id).slice(8) : (String(id || '').indexOf('qq:') === 0 ? String(id).slice(3) : '');
+  if (spotifyPlaylistId && !spotifySourceEnabled) {
+    hideLoading();
+    showToast('Spotify 源已关闭，当前只使用 YouTube Music');
+    return;
+  }
   var r = null;
   try {
     r = spotifyPlaylistId
@@ -24062,6 +24327,7 @@ function platformMeta(provider) {
   return { key: 'youtube', short: 'YT', label: 'YouTube Music', app: 'YouTube Music App', dot: 'youtube' };
 }
 function platformStatus(provider) {
+  if (provider === 'spotify' && !spotifySourceEnabled) return normalizeSpotifyLoginStatus(null);
   return provider === 'spotify' ? spotifyLoginStatus : loginStatus;
 }
 function providerVipType(provider, status) {
@@ -24095,6 +24361,7 @@ function providerVipBadge(provider, status, idAttr) {
   return '<span' + id + ' class="' + cls + '">' + label + '</span>';
 }
 function hasPlatformLogin(provider) {
+  if (provider === 'spotify' && !spotifySourceEnabled) return false;
   var st = platformStatus(provider);
   return !!(st && st.loggedIn);
 }
@@ -24143,7 +24410,7 @@ async function refreshLoginStatus(force) {
       loadHomeDiscover(true);
       syncLikeStatusForSongs(playQueue.concat(playlist || []));
     } else {
-      userPlaylists = spotifyPlaylists.slice();
+      userPlaylists = [];
       myPodcastCollections = [];
       myPodcastItems = {};
       likedSongMap = {};
@@ -24181,6 +24448,13 @@ function normalizeSpotifyLoginStatus(info) {
   });
 }
 async function refreshSpotifyLoginStatus() {
+  if (!spotifySourceEnabled) {
+    spotifyLoginStatus = normalizeSpotifyLoginStatus(null);
+    spotifyPlaylists = [];
+    userPlaylists = userPlaylists.filter(function(pl){ return pl.provider !== 'spotify'; });
+    renderUserBtn();
+    return spotifyLoginStatus;
+  }
   try {
     var info = await apiJson('/api/spotify/login/status?t=' + Date.now());
     var prevLogged = !!spotifyLoginStatus.loggedIn;
@@ -24211,6 +24485,10 @@ async function refreshSpotifyLoginStatus() {
 }
 function startSpotifyLoginStatusAutoRefresh() {
   if (spotifyLoginAutoRefreshTimer) clearInterval(spotifyLoginAutoRefreshTimer);
+  if (!spotifySourceEnabled) {
+    spotifyLoginAutoRefreshTimer = null;
+    return;
+  }
   spotifyLoginAutoRefreshTimer = setInterval(function(){
     refreshSpotifyLoginStatus().catch(function(e){ console.warn('Spotify login auto refresh failed:', e); });
   }, 45000);
@@ -24245,7 +24523,7 @@ function renderUserBtn() {
 }
 async function showLoginModal(opts) {
   opts = opts || {};
-  if (opts.provider) loginProvider = opts.provider === 'spotify' ? 'spotify' : 'youtube';
+  if (opts.provider) loginProvider = spotifySourceEnabled && opts.provider === 'spotify' ? 'spotify' : 'youtube';
   var modal = document.getElementById('login-modal');
   openGsapModal(modal);
   updateLoginProviderUi();
@@ -24256,12 +24534,12 @@ function closeLoginModal() {
   closeGsapModal(document.getElementById('login-modal'));
 }
 function setLoginProvider(provider, silent) {
-  loginProvider = provider === 'spotify' ? 'spotify' : 'youtube';
+  loginProvider = spotifySourceEnabled && provider === 'spotify' ? 'spotify' : 'youtube';
   updateLoginProviderUi();
   if (!silent && document.getElementById('login-modal').classList.contains('show')) refreshQr();
 }
 function startProviderLogin(provider) {
-  provider = provider === 'spotify' ? 'spotify' : 'youtube';
+  provider = spotifySourceEnabled && provider === 'spotify' ? 'spotify' : 'youtube';
   loginProvider = provider;
   updateLoginProviderUi();
   if (provider === 'spotify') openSpotifyWebLogin();
@@ -24277,6 +24555,7 @@ function updateLoginProviderUi() {
     if (ytGo) ytGo.textContent = googleWebLoginBusy ? '登录中…' : (loginStatus.loggedIn ? '已连接' : '授权登录');
   }
   if (spRow) {
+    spRow.style.display = spotifySourceEnabled ? '' : 'none';
     spRow.classList.toggle('busy', !!spotifyWebLoginBusy);
     spRow.classList.toggle('connected', !!spotifyLoginStatus.loggedIn);
     var spGo = spRow.querySelector('.lp-go');
@@ -24285,17 +24564,23 @@ function updateLoginProviderUi() {
   var spotifyPanel = document.getElementById('spotify-cookie-panel');
   var spotifyCookieToggle = document.getElementById('spotify-cookie-toggle-btn');
   if (spotifyPanel) spotifyPanel.classList.toggle('show', spotifyManualCookieOpen);
-  if (spotifyCookieToggle) spotifyCookieToggle.textContent = spotifyManualCookieOpen ? '收起 Spotify 导入' : 'Spotify 手动导入';
+  if (spotifyCookieToggle) {
+    spotifyCookieToggle.style.display = spotifySourceEnabled ? '' : 'none';
+    spotifyCookieToggle.textContent = spotifyManualCookieOpen ? '收起 Spotify 导入' : 'Spotify 手动导入';
+  }
 }
 async function refreshQr() {
   stopQrPoll();
   updateLoginProviderUi();
-  try { await refreshSpotifyLoginStatus(); } catch (e) {}
+  if (spotifySourceEnabled) {
+    try { await refreshSpotifyLoginStatus(); } catch (e) {}
+  }
   updateLoginProviderUi();
 }
 function startQrPoll() { if (qrPollTimer) clearInterval(qrPollTimer); qrPollTimer = setInterval(checkQr, 2000); }
 function stopQrPoll() { if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; } }
 function toggleSpotifyCookiePanel() {
+  if (!spotifySourceEnabled) return;
   spotifyManualCookieOpen = !spotifyManualCookieOpen;
   updateLoginProviderUi();
 }
@@ -24349,6 +24634,10 @@ async function openGoogleWebLogin() {
   }
 }
 async function openSpotifyWebLogin() {
+  if (!spotifySourceEnabled) {
+    showToast('Spotify 源已关闭，当前只使用 YouTube Music');
+    return;
+  }
   if (spotifyWebLoginBusy) return;
   var statusEl = document.getElementById('qr-status');
   var api = window.desktopWindow;
@@ -24398,6 +24687,10 @@ async function openSpotifyWebLogin() {
   }
 }
 async function submitSpotifyCookieLogin() {
+  if (!spotifySourceEnabled) {
+    showToast('Spotify 源已关闭，当前只使用 YouTube Music');
+    return;
+  }
   if (spotifyCookieBusy) return;
   var input = document.getElementById('spotify-cookie-input');
   var statusEl = document.getElementById('qr-status');
@@ -24468,11 +24761,14 @@ function updateUserModalUi() {
   }
   ['youtube','spotify'].forEach(function(key){
     var btn = document.getElementById('user-provider-' + key);
-    if (btn) btn.classList.toggle('active', activeAccountProvider === key);
+    if (btn) {
+      btn.style.display = key === 'spotify' && !spotifySourceEnabled ? 'none' : '';
+      btn.classList.toggle('active', activeAccountProvider === key);
+    }
   });
   if (addYoutube) addYoutube.style.display = hasPlatformLogin('youtube') ? 'none' : '';
   if (logoutBtn) logoutBtn.textContent = activeAccountProvider === 'spotify' ? '退出 Spotify' : '退出 YouTube Music';
-  if (hint) hint.textContent = '可切换右上角展示的平台（YouTube Music 或 Spotify）。';
+  if (hint) hint.textContent = spotifySourceEnabled ? '可切换右上角展示的平台（YouTube Music 或 Spotify）。' : '当前使用 YouTube Music 会话。';
 }
 function showUserModal() {
   if (!hasAnyPlatformLogin()) return showLoginModal();
@@ -24481,7 +24777,7 @@ function showUserModal() {
 }
 function closeUserModal() { closeGsapModal(document.getElementById('user-modal')); }
 function setActiveAccountProvider(provider) {
-  provider = provider === 'spotify' ? 'spotify' : 'youtube';
+  provider = spotifySourceEnabled && provider === 'spotify' ? 'spotify' : 'youtube';
   if (!hasPlatformLogin(provider)) {
     openProviderLogin(provider);
     return;
@@ -24492,6 +24788,15 @@ function setActiveAccountProvider(provider) {
   updateUserModalUi();
 }
 function enableDualAccountView() {
+  if (!spotifySourceEnabled) {
+    if (!hasPlatformLogin('youtube')) openProviderLogin('youtube');
+    else {
+      activeAccountProvider = 'youtube';
+      renderUserBtn();
+      updateUserModalUi();
+    }
+    return;
+  }
   if (!hasPlatformLogin('youtube') && !hasPlatformLogin('spotify')) {
     openProviderLogin('youtube');
     return;
@@ -24513,7 +24818,7 @@ function requestDualLoginMode() {
   enableDualAccountView();
 }
 function openProviderLogin(provider) {
-  provider = provider === 'spotify' ? 'spotify' : 'youtube';
+  provider = spotifySourceEnabled && provider === 'spotify' ? 'spotify' : 'youtube';
   closeUserModal();
   loginProvider = provider;
   showLoginModal({ provider: provider });
@@ -24549,7 +24854,8 @@ async function doLogout() {
   loginStatus = { loggedIn: false };
   if (!hasPlatformLogin('youtube') || !hasPlatformLogin('spotify')) dualAccountMode = false;
   activeAccountProvider = firstLoggedProvider();
-  userPlaylists = spotifyPlaylists.slice();
+  userPlaylists = [];
+  spotifyPlaylists = [];
   myPodcastCollections = [];
   myPodcastItems = {};
   likedSongMap = {};
@@ -27252,7 +27558,7 @@ if (fx.floatLayer) createFloatLayer();
 if (fx.particleLyrics) createLyricsParticles();
 if (fx.backCover) createBackCoverLayer();
 initIdleGuideCanvas();
-var startupLoginStatusPromise = Promise.all([refreshLoginStatus(), refreshSpotifyLoginStatus()]);
+var startupLoginStatusPromise = Promise.all([refreshLoginStatus()]);
 startSpotifyLoginStatusAutoRefresh();
 if (startupLoginStatusPromise && startupLoginStatusPromise.then) {
   startupLoginStatusPromise.then(function(){

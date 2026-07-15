@@ -1,5 +1,13 @@
 # Mineradio Project Memory
 
+### 2026-07-15 - 搜索播放后的 YouTube Music 推荐队列稳定规则
+
+- 用户认可/要求保留：搜索并播放任意歌曲后，左侧队列必须直接根据第一首歌一直做 YouTube Music 推荐；队列不能偶发只剩当前歌曲，也不能显示黑块、`Unknown`、`未知歌手` 等占位项。
+- 涉及文件：`public/index.html`、`server.js`、`tests/playlist-api-static.test.js`、`CHANGELOG.md`。
+- 关键实现：`/api/radio` 支持 `id/title/artist`，只走 YouTube Music，先取 `getUpNext`，不足时用 YTM 搜索兜底；前端通过 `sameQueueSeedSong()`、`findQueueSeedIndex()`、`applyRadioRecommendations()` 按种子歌身份落队列，不再只依赖 `currentIdx` 的瞬时值；`scheduleRadioPrimeRetry()` 在 radio 返回后未成功落队列时做 0.7s/1.8s/3.6s 短重试。
+- 收藏写入规则：`VLLM`/「点赞的歌曲」不能调用 `yt.playlist.addVideos()` 或 `browse/edit_playlist`，必须走 `yt.interact.like()`；普通歌单如果是 `VL...` 浏览 ID，写入前必须用 `normalizeYtmPlaylistEditId()` 去掉 `VL` 前缀。
+- 禁止回退或改坏的点：不要恢复 Spotify 参与搜索/推荐的默认路径；不要让 radio 推荐结果直接绕过 `isValidQueueSong()`；不要把搜索播放队列改回只塞当前歌后等待自然下一首再推荐；不要移除队列渲染前的占位项清理。
+
 ### 2026-07-04 - 网易云/QQ 底座彻底移除与 Spotify 真实接入
 
 - 用户要求：分析全部代码并把所有网易云/QQ 逻辑替换干净；Spotify 真实接入（账号/歌单/搜索走 Spotify Web API，播放匹配 YouTube Music 音源）；评论替换为 YouTube 评论；内部命名彻底改名。
