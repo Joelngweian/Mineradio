@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.2
+
+- 修复 YouTube Music 搜索结果缺少 `artists` 字段时被前端误判为信息缺失的问题；后端现在会从搜索条目的 `flex_columns` 元数据里补回歌手。
+- 修复搜索 `Little Wish` 等歌曲时显示 `Unknown Artist` 并点击播放被跳过的问题，真实搜索结果可以正常播放并继续生成推荐队列。
+- 增加搜索映射回归测试，防止后续 YTM 字段结构变化再次让有效歌曲掉入占位数据拦截。
+
 ## v1.3.1
 
 - 收藏到「点赞的歌曲」改走 YouTube Music 红心接口；普通歌单收藏会把 `VL...` 浏览 ID 转为可编辑歌单 ID，修复 `browse/edit_playlist` 400。

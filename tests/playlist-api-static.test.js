@@ -74,6 +74,17 @@ test('radio panel mapping reads nested YouTube Music fields and skips empty titl
   assert.match(serverSource, /const artists = ytmPeople\(it\.artists \|\| it\.authors \|\| it\.author \|\| it\.byline\)/);
 });
 
+test('search mapping recovers YouTube Music flex-column artists', () => {
+  assert.match(serverSource, /function ytmRuns\(value\)/);
+  assert.match(serverSource, /function ytmFlexColumnRuns\(item, index\)/);
+  assert.match(serverSource, /function ytmArtistFallbackFromFlexColumns\(item, albumName\)/);
+  assert.match(serverSource, /const fallbackArtist = ytmArtistFallbackFromFlexColumns\(item, albumName\)/);
+  assert.match(serverSource, /const mappedArtists = artistList\.length \? artistList : \(fallbackArtist \? \[\{ id: '', name: fallbackArtist \}\] : \[\]\)/);
+  assert.match(serverSource, /artist: artistStr \|\| fallbackArtist \|\| 'Unknown Artist'/);
+  assert.match(serverSource, /artists: mappedArtists/);
+  assert.match(serverSource, /artistId: mappedArtists\[0\] \? \(mappedArtists\[0\]\.id \|\| ''\) : ''/);
+});
+
 test('radio endpoint falls back to song search when up-next is sparse', () => {
   assert.match(serverSource, /function isValidRadioSong\(song\)/);
   assert.match(serverSource, /function isPlaceholderRadioText\(text\)/);

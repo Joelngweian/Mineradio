@@ -64,6 +64,13 @@ function ytmText(value) {
   if (Array.isArray(value.runs)) return value.runs.map(r => ytmText(r && (r.text || r))).filter(Boolean).join('');
   return '';
 }
+function ytmRuns(value) {
+  if (!value) return [];
+  if (Array.isArray(value.runs)) return value.runs;
+  if (value.title) return ytmRuns(value.title);
+  if (value.text && typeof value.text === 'object') return ytmRuns(value.text);
+  return [];
+}
 function ytmThumbnails(value) {
   if (!value) return [];
   if (Array.isArray(value)) return value;
@@ -79,6 +86,38 @@ function ytmPeople(value) {
     return { id: (a && (a.channel_id || a.id || a.browse_id)) || '', name };
   }).filter(a => a.name);
 }
+function ytmFlexColumnRuns(item, index) {
+  const columns = (item && (item.flex_columns || item.flexColumns)) || [];
+  const column = columns[index];
+  return ytmRuns(column && (column.title || column.text || column));
+}
+function isYtmMetadataSeparator(text) {
+  return /^(?:[•·|]|[-–—])+$/.test(String(text || '').trim());
+}
+function normalizeYtmArtistName(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s*&\s*/g, ' & ')
+    .trim();
+}
+function ytmArtistFallbackFromFlexColumns(item, albumName) {
+  const groups = [[]];
+  for (const run of ytmFlexColumnRuns(item, 1)) {
+    const text = ytmText(run && (run.text || run));
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+    if (isYtmMetadataSeparator(trimmed)) {
+      if (groups[groups.length - 1].length) groups.push([]);
+      continue;
+    }
+    if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(trimmed)) break;
+    groups[groups.length - 1].push(text);
+  }
+  const firstGroup = normalizeYtmArtistName((groups[0] || []).join(''));
+  if (!firstGroup || firstGroup === normalizeYtmArtistName(albumName)) return '';
+  return firstGroup;
+}
 
 function mapYTMItem(item) {
   if (!item || !item.id) return null;
@@ -92,15 +131,17 @@ function mapYTMItem(item) {
   const artistStr = artistList.map(a => a.name).join(' / ');
   const durationSec = item.duration ? (item.duration.seconds || 0) : 0;
   const albumName = ytmText(item.album);
+  const fallbackArtist = ytmArtistFallbackFromFlexColumns(item, albumName);
+  const mappedArtists = artistList.length ? artistList : (fallbackArtist ? [{ id: '', name: fallbackArtist }] : []);
   return {
     provider: 'youtube',
     source: 'youtube',
     type: 'song',
     id: item.id,
     name: ytmText(item.title) || ytmText(item.name) || 'Unknown',
-    artist: artistStr || 'Unknown Artist',
-    artists: artistList,
-    artistId: artistList[0] ? (artistList[0].id || '') : '',
+    artist: artistStr || fallbackArtist || 'Unknown Artist',
+    artists: mappedArtists,
+    artistId: mappedArtists[0] ? (mappedArtists[0].id || '') : '',
     album: albumName,
     cover: cover,
     duration: durationSec * 1000,
