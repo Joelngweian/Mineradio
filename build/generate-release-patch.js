@@ -5,8 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const PATCH_ALLOWED_ROOTS = new Set(['public', 'desktop', 'build']);
-const PATCH_ALLOWED_FILES = new Set(['server.js', 'dj-analyzer.js', 'package.json', 'package-lock.json']);
+const PATCH_ALLOWED_ROOTS = new Set(['public', 'desktop', 'build', 'server']);
+const PATCH_ALLOWED_FILES = new Set(['server.js', 'server-app.js', 'dj-analyzer.js', 'package.json', 'package-lock.json']);
 const PATCH_BLOCKED_EXT = /\.(exe|dll|node|msi|bat|cmd|ps1|pfx|pem|key)$/i;
 const GIT_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
 

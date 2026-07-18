@@ -4,8 +4,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+const serverSource = [
+  'server-app.js',
+  'server/update-service.js'
+].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const appSource = fs.readFileSync(path.join(root, 'public', 'js', 'app.js'), 'utf8');
 const queueModuleSource = fs.readFileSync(path.join(root, 'public', 'js', 'modules', 'queue-state.js'), 'utf8');
 const queueControllerSource = fs.readFileSync(path.join(root, 'public', 'js', 'modules', 'queue-controller.js'), 'utf8');
 
@@ -31,7 +35,7 @@ test('song like endpoint writes to YouTube Music instead of fake success', () =>
 });
 
 test('collect modal creates playlists with POST body', () => {
-  assert.match(indexSource, /apiJson\('\/api\/playlist\/create',\s*\{[\s\S]*method:\s*'POST'[\s\S]*JSON\.stringify\(\{\s*name:\s*name\s*\}\)/);
+  assert.match(appSource, /apiJson\('\/api\/playlist\/create',\s*\{[\s\S]*method:\s*'POST'[\s\S]*JSON\.stringify\(\{\s*name:\s*name\s*\}\)/);
 });
 
 test('YouTube liked songs are labeled and counted from real playlist items', () => {
@@ -45,28 +49,28 @@ test('YouTube liked songs are labeled and counted from real playlist items', () 
 
 test('home page has listening-based recommendation row', () => {
   assert.match(indexSource, /id="home-recommend-row"/);
-  assert.match(indexSource, /function homePersonalRecommendations\(\)/);
-  assert.match(indexSource, /function renderHomeRecommendations\(\)/);
-  assert.match(indexSource, /function playHomeRecommendation\(index\)/);
-  assert.match(indexSource, /weatherCardTitle\) weatherCardTitle\.textContent = playlistItem \?/);
+  assert.match(appSource, /function homePersonalRecommendations\(\)/);
+  assert.match(appSource, /function renderHomeRecommendations\(\)/);
+  assert.match(appSource, /function playHomeRecommendation\(index\)/);
+  assert.match(appSource, /weatherCardTitle\) weatherCardTitle\.textContent = playlistItem \?/);
 });
 
 test('search playback immediately rebuilds queue from the selected song radio', () => {
-  const fetchRadioSource = indexSource.match(/async function fetchRadioSongsForSeed\(song\) \{[\s\S]*?\n\}/)[0];
-  assert.match(indexSource, /function isUsefulRadioSong\(song\)/);
-  assert.match(indexSource, /function primeQueueWithSeedRadio\(song,\s*attempt\)/);
-  assert.match(indexSource, /var seed = songProviderKey\(song\) === 'youtube' \? \(song\.id \|\| ''\) : ''/);
+  const fetchRadioSource = appSource.match(/async function fetchRadioSongsForSeed\(song\) \{[\s\S]*?\n\}/)[0];
+  assert.match(appSource, /function isUsefulRadioSong\(song\)/);
+  assert.match(appSource, /function primeQueueWithSeedRadio\(song,\s*attempt\)/);
+  assert.match(appSource, /var seed = songProviderKey\(song\) === 'youtube' \? \(song\.id \|\| ''\) : ''/);
   assert.doesNotMatch(fetchRadioSource, /songProviderKey\(song\) !== 'youtube'/);
   assert.match(fetchRadioSource, /var title = song\.name \|\| ''/);
   assert.match(fetchRadioSource, /var artist = song\.artist \|\| ''/);
   assert.match(fetchRadioSource, /params\.push\('title=' \+ encodeURIComponent\(title\)\)/);
   assert.match(fetchRadioSource, /params\.push\('artist=' \+ encodeURIComponent\(artist\)\)/);
   assert.match(fetchRadioSource, /return \(\(r && r\.songs\) \|\| \[\]\)\.filter\(isUsefulRadioSong\)/);
-  assert.match(indexSource, /MineradioModules\.queueController\.createSearchSeedQueue\(song, cloneSong\)/);
-  assert.match(indexSource, /var seedSong = seedState\.seedSong;\s*playQueue = seedState\.queue;\s*currentIdx = seedState\.currentIdx;/);
-  assert.match(indexSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*true/);
-  assert.match(indexSource, /playQueueAt\(currentIdx\);\s*primeQueueWithSeedRadio\(seedSong\);/);
-  assert.match(indexSource, /maybeExtendQueueWithRadio\(song\)[\s\S]*currentIdx < playQueue\.length - 1/);
+  assert.match(appSource, /MineradioModules\.queueController\.createSearchSeedQueue\(song, cloneSong\)/);
+  assert.match(appSource, /var seedSong = seedState\.seedSong;\s*playQueue = seedState\.queue;\s*currentIdx = seedState\.currentIdx;/);
+  assert.match(appSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*true/);
+  assert.match(appSource, /playQueueAt\(currentIdx\);\s*primeQueueWithSeedRadio\(seedSong\);/);
+  assert.match(appSource, /maybeExtendQueueWithRadio\(song\)[\s\S]*currentIdx < playQueue\.length - 1/);
 });
 
 test('radio panel mapping reads nested YouTube Music fields and skips empty titles', () => {
@@ -109,29 +113,29 @@ test('radio endpoint falls back to song search when up-next is sparse', () => {
 });
 
 test('music search and playlist refresh use YouTube Music only', () => {
-  const fetchSearchSource = indexSource.match(/async function fetchMusicSearchResults\(q, mode\) \{[\s\S]*?\n\}/)[0];
-  const refreshPlaylistsSource = indexSource.match(/async function refreshUserPlaylists\(force\) \{[\s\S]*?\n\}/)[0];
+  const fetchSearchSource = appSource.match(/async function fetchMusicSearchResults\(q, mode\) \{[\s\S]*?\n\}/)[0];
+  const refreshPlaylistsSource = appSource.match(/async function refreshUserPlaylists\(force\) \{[\s\S]*?\n\}/)[0];
   assert.match(fetchSearchSource, /\/api\/search\?keywords=/);
   assert.doesNotMatch(fetchSearchSource, /\/api\/[a-z]+\/search/);
   assert.doesNotMatch(refreshPlaylistsSource, /\/api\/[a-z]+\/user\/playlists/);
-  assert.match(indexSource, /var startupLoginStatusPromise = Promise\.all\(\[refreshLoginStatus\(\)\]\)/);
-  assert.match(indexSource, /function alternatePlaybackProvider\(song\) \{\s*return 'youtube';\s*\}/);
-  assert.match(indexSource, /function songProviderKey\(song\) \{[\s\S]*return 'youtube';[\s\S]*\}/);
-  assert.match(indexSource, /apiJson\('\/api\/playlist\/tracks\?id=' \+ encodeURIComponent\(id\)\)/);
+  assert.match(appSource, /var startupLoginStatusPromise = Promise\.all\(\[refreshLoginStatus\(\)\]\)/);
+  assert.match(appSource, /function alternatePlaybackProvider\(song\) \{\s*return 'youtube';\s*\}/);
+  assert.match(appSource, /function songProviderKey\(song\) \{[\s\S]*return 'youtube';[\s\S]*\}/);
+  assert.match(appSource, /apiJson\('\/api\/playlist\/tracks\?id=' \+ encodeURIComponent\(id\)\)/);
   assert.doesNotMatch(serverSource, /MINERADIO_ENABLE_[A-Z]+/);
 });
 
 test('queue rendering drops invalid unknown placeholder songs', () => {
-  const queueSongSource = indexSource.match(/function queueSong\(song, opts\) \{[\s\S]*?\n\}/)[0];
-  const renderQueueSource = indexSource.match(/function renderQueuePanel\(opts\) \{[\s\S]*?\n\}/)[0];
-  const renderMiniQueueSource = indexSource.match(/function renderMiniQueuePanel\(opts\) \{[\s\S]*?\n\}/)[0];
-  const playQueueAtSource = indexSource.match(/async function playQueueAt\(idx, opts\) \{[\s\S]*?markRenderInteraction/)[0];
-  const primeRadioSource = indexSource.match(/async function primeQueueWithSeedRadio\(song,\s*attempt\) \{[\s\S]*?\n\}/)[0];
-  const applyRadioSource = indexSource.match(/function applyRadioRecommendations\(seedSong, recs, opts\) \{[\s\S]*?\n\}/)[0];
-  const extendRadioSource = indexSource.match(/async function maybeExtendQueueWithRadio\(song\) \{[\s\S]*?\n\}/)[0];
-  assert.match(indexSource, /function isPlaceholderQueueText\(text\)/);
-  assert.match(indexSource, /function isValidQueueSong\(song\)/);
-  assert.match(indexSource, /function normalizePlayQueue\(reason\)/);
+  const queueSongSource = appSource.match(/function queueSong\(song, opts\) \{[\s\S]*?\n\}/)[0];
+  const renderQueueSource = appSource.match(/function renderQueuePanel\(opts\) \{[\s\S]*?\n\}/)[0];
+  const renderMiniQueueSource = appSource.match(/function renderMiniQueuePanel\(opts\) \{[\s\S]*?\n\}/)[0];
+  const playQueueAtSource = appSource.match(/async function playQueueAt\(idx, opts\) \{[\s\S]*?markRenderInteraction/)[0];
+  const primeRadioSource = appSource.match(/async function primeQueueWithSeedRadio\(song,\s*attempt\) \{[\s\S]*?\n\}/)[0];
+  const applyRadioSource = appSource.match(/function applyRadioRecommendations\(seedSong, recs, opts\) \{[\s\S]*?\n\}/)[0];
+  const extendRadioSource = appSource.match(/async function maybeExtendQueueWithRadio\(song\) \{[\s\S]*?\n\}/)[0];
+  assert.match(appSource, /function isPlaceholderQueueText\(text\)/);
+  assert.match(appSource, /function isValidQueueSong\(song\)/);
+  assert.match(appSource, /function normalizePlayQueue\(reason\)/);
   assert.match(queueSongSource, /if \(!isValidQueueSong\(song\)\) return -1/);
   assert.match(renderQueueSource, /normalizePlayQueue\('render-queue-panel'\)/);
   assert.match(renderMiniQueueSource, /normalizePlayQueue\('render-mini-queue'\)/);
@@ -139,17 +143,19 @@ test('queue rendering drops invalid unknown placeholder songs', () => {
   assert.match(applyRadioSource, /MineradioModules\.queueController\.mergeRadioRecommendations\(playQueue, currentIdx, seedSong, recs/);
   assert.match(queueControllerSource, /if \(!isValid\(song\) \|\| sameQueueSeedSong\(seedSong, song, opts\)\) return/);
   assert.match(extendRadioSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*false/);
-  assert.match(indexSource + queueModuleSource, /unknownartist[\s\S]*variousartists[\s\S]*未知歌手/);
+  assert.match(appSource + queueModuleSource, /unknownartist[\s\S]*variousartists[\s\S]*未知歌手/);
 });
 
 test('radio recommendations are inserted even when playback setup shifts queue state', () => {
-  const primeRadioSource = indexSource.match(/async function primeQueueWithSeedRadio\(song[\s\S]*?\n\}/)[0];
-  const extendRadioSource = indexSource.match(/async function maybeExtendQueueWithRadio\(song\) \{[\s\S]*?\n\}/)[0];
-  assert.match(indexSource, /function sameQueueSeedSong\(a, b\)/);
-  assert.match(indexSource, /function findQueueSeedIndex\(seedSong\)/);
-  assert.match(indexSource, /function applyRadioRecommendations\(seedSong, recs, opts\)/);
+  const primeRadioSource = appSource.match(/async function primeQueueWithSeedRadio\(song[\s\S]*?\n\}/)[0];
+  const extendRadioSource = appSource.match(/async function maybeExtendQueueWithRadio\(song\) \{[\s\S]*?\n\}/)[0];
+  assert.match(appSource, /function sameQueueSeedSong\(a, b\)/);
+  assert.match(appSource, /function findQueueSeedIndex\(seedSong\)/);
+  assert.match(appSource, /function applyRadioRecommendations\(seedSong, recs, opts\)/);
   assert.match(primeRadioSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*true/);
+  assert.match(primeRadioSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*requireCurrent:\s*false/);
   assert.match(primeRadioSource, /scheduleRadioPrimeRetry\(song,\s*serial,\s*attempt/);
+  assert.doesNotMatch(primeRadioSource, /!sameQueueSeedSong\(playQueue\[currentIdx\], song\)/);
   assert.doesNotMatch(primeRadioSource, /queueItemKey\(playQueue\[currentIdx\]\) !== seedKey/);
   assert.match(extendRadioSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*false/);
 });

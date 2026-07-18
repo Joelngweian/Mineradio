@@ -7,9 +7,14 @@ const root = path.resolve(__dirname, '..');
 
 const activeFiles = [
   'server.js',
+  'server-app.js',
+  'server/update-service.js',
   'desktop/main.js',
   'desktop/preload.js',
   'public/index.html',
+  'public/js/app.js',
+  'public/js/preload-mode.js',
+  'public/css/app.css',
   'README.md',
   'PRIVACY.md',
   'NOTICE.md',
@@ -42,7 +47,7 @@ test('active app code and public docs contain no removed provider residue', () =
 });
 
 test('account and login UI does not ship placeholder question-mark copy', () => {
-  const source = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   const start = source.indexOf('function renderUserBtn');
   const end = source.indexOf('var startupLoginGuideShown');
 

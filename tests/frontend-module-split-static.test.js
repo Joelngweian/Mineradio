@@ -7,8 +7,11 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const publicRoot = path.join(root, 'public');
 const indexSource = fs.readFileSync(path.join(publicRoot, 'index.html'), 'utf8');
+const appSource = fs.readFileSync(path.join(publicRoot, 'js', 'app.js'), 'utf8');
 
 const modules = [
+  ['apiClient', 'js/modules/api-client.js'],
+  ['appVersion', 'js/modules/app-version.js'],
   ['wallpaperState', 'js/modules/wallpaper-state.js'],
   ['queueState', 'js/modules/queue-state.js'],
   ['queueController', 'js/modules/queue-controller.js'],
@@ -23,9 +26,9 @@ function readModule(relativePath) {
   return fs.readFileSync(path.join(publicRoot, relativePath), 'utf8');
 }
 
-test('front-end feature modules load before the main inline app script', () => {
-  const mainScriptIndex = indexSource.indexOf('var MineradioModules = window.MineradioModules || (window.MineradioModules = {});');
-  assert.notEqual(mainScriptIndex, -1, 'main inline app script should be identifiable');
+test('front-end feature modules load before the main app script', () => {
+  const mainScriptIndex = indexSource.indexOf('<script src="js/app.js"></script>');
+  assert.notEqual(mainScriptIndex, -1, 'main app script should be loaded from index.html');
 
   modules.forEach(([, relativePath]) => {
     const tag = `<script src="${relativePath}"></script>`;
@@ -99,6 +102,92 @@ test('beat dynamics module boosts climax drum hits and shortens their interval',
   assert.ok(climax.zoomScale > weak.zoomScale, 'climax hit should drive stronger push/zoom');
   assert.ok(climax.intervalScale < weak.intervalScale, 'climax hit should allow denser beat camera scheduling');
   assert.ok(climax.pulseScale > weak.pulseScale, 'climax hit should increase visual beat pulse');
+});
+
+test('beat dynamics respects reduced motion and user motion caps', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/beat-dynamics.js'), { filename: 'beat-dynamics.js' }).runInContext(sandbox);
+
+  const beatDynamics = sandbox.window.MineradioModules.beatDynamics;
+  const full = beatDynamics.cameraBeatEnvelope({
+    strength: 0.92,
+    confidence: 0.92,
+    impact: 0.90,
+    low: 0.88,
+    body: 0.54,
+    snap: 0.28,
+    combo: 'drop'
+  }, 'map', { sectionEnergy: 0.86, sectionLow: 0.88, cinemaShake: 1.4, motionScale: 1 });
+  const reduced = beatDynamics.cameraBeatEnvelope({
+    strength: 0.92,
+    confidence: 0.92,
+    impact: 0.90,
+    low: 0.88,
+    body: 0.54,
+    snap: 0.28,
+    combo: 'drop'
+  }, 'map', { sectionEnergy: 0.86, sectionLow: 0.88, cinemaShake: 1.4, motionScale: 0.35, reduceMotion: true });
+
+  assert.ok(reduced.ampScale < full.ampScale, 'reduced motion should lower camera amplitude');
+  assert.ok(reduced.zoomScale < full.zoomScale, 'reduced motion should lower push/zoom');
+  assert.ok(reduced.intervalScale >= full.intervalScale, 'reduced motion should not make hits denser');
+  assert.equal(reduced.strongBypass, false, 'reduced motion should not bypass beat spacing');
+});
+
+test('api client owns json fetch timeout and cleanup behavior', async () => {
+  let abortCalled = false;
+  let cleared = false;
+  let fetchedUrl = '';
+  const sandbox = {
+    window: {
+      AbortController: function() {
+        this.signal = { aborted: false };
+        this.abort = function() {
+          abortCalled = true;
+          this.signal.aborted = true;
+        };
+      }
+    },
+    setTimeout(fn) {
+      fn();
+      return 7;
+    },
+    clearTimeout(id) {
+      if (id === 7) cleared = true;
+    },
+    fetch(url, opts) {
+      fetchedUrl = url;
+      assert.equal(opts.signal.aborted, true);
+      return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
+    }
+  };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/api-client.js'), { filename: 'api-client.js' }).runInContext(sandbox);
+
+  const data = await sandbox.window.MineradioModules.apiClient.apiJson('/api/example', { timeoutMs: 2500, headers: { accept: 'json' } });
+  assert.deepEqual(data, { ok: true });
+  assert.equal(fetchedUrl, '/api/example');
+  assert.equal(abortCalled, true);
+  assert.equal(cleared, true);
+});
+
+test('app version module normalizes server version into update preview state', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/app-version.js'), { filename: 'app-version.js' }).runInContext(sandbox);
+
+  const state = { currentVersion: '0.9.11', version: '1.1.0', notes: ['old'] };
+  const result = sandbox.window.MineradioModules.appVersion.applyAppVersionState(state, {
+    ok: true,
+    version: '1.3.6',
+    update: { preview: false }
+  });
+
+  assert.equal(result.currentVersion, '1.3.6');
+  assert.equal(result.version, '1.3.6');
+  assert.equal(result.preview, false);
+  assert.equal(sandbox.window.MineradioModules.appVersion.normalizeVersionText('v1.3.6'), '1.3.6');
 });
 
 test('queue module renders queue row markup outside the main html blob', () => {
@@ -250,6 +339,30 @@ test('queue controller keeps search seed and radio merge deterministic', () => {
   assert.equal(merged.queue[1].hydrated, true);
 });
 
+test('queue controller can merge radio results when current index drifts away from the seed', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/queue-controller.js'), { filename: 'queue-controller.js' }).runInContext(sandbox);
+  const controller = sandbox.window.MineradioModules.queueController;
+  const seed = { id: 'seed1', name: 'Seed', artist: 'Artist', cover: 'seed.jpg' };
+  const queue = [
+    seed,
+    { id: 'manual1', name: 'Manual', artist: 'Artist', cover: 'manual.jpg' }
+  ];
+
+  const merged = controller.mergeRadioRecommendations(queue, 1, seed, [
+    { id: 'next1', name: 'Next', artist: 'Artist', cover: 'next.jpg' }
+  ], {
+    requireCurrent: false,
+    replaceTail: true,
+    isValidQueueSong: song => !!(song && song.id && song.name && song.artist && song.cover)
+  });
+
+  assert.equal(merged.seedIndex, 0);
+  assert.equal(merged.added, 1);
+  assert.deepEqual(merged.queue.map(song => song.id), ['seed1', 'next1']);
+});
+
 test('wallpaper module owns swap-token and exit-transform decisions', () => {
   const sandbox = { window: {} };
   vm.createContext(sandbox);
@@ -277,30 +390,32 @@ test('wallpaper module owns swap-token and exit-transform decisions', () => {
 });
 
 test('main app delegates moved helpers through MineradioModules', () => {
-  assert.match(indexSource, /var MineradioModules = window\.MineradioModules \|\| \(window\.MineradioModules = \{\}\);/);
-  assert.match(indexSource, /MineradioModules\.queueState\.queueTextKey\(text\)/);
-  assert.match(indexSource, /MineradioModules\.queueState\.isPlaceholderQueueText\(text\)/);
-  assert.match(indexSource, /MineradioModules\.queueState\.isValidQueueSong\(song\)/);
-  assert.match(indexSource, /MineradioModules\.queueState\.isUsefulRadioSong\(song\)/);
-  assert.match(indexSource, /MineradioModules\.queueState\.renderQueueItemsHtml\(playQueue, currentIdx/);
-  assert.match(indexSource, /MineradioModules\.queueController\.createSearchSeedQueue\(/);
-  assert.match(indexSource, /MineradioModules\.queueController\.mergeRadioRecommendations\(/);
-  assert.match(indexSource, /MineradioModules\.updatePanel\.formatUpdateBytes\(bytes\)/);
-  assert.match(indexSource, /MineradioModules\.updatePanel\.formatUpdateSpeed\(bytesPerSecond\)/);
-  assert.match(indexSource, /MineradioModules\.updatePanel\.renderUpdateNotesHtml\(/);
-  assert.match(indexSource, /MineradioModules\.updatePanel\.previewView\(/);
-  assert.match(indexSource, /MineradioModules\.wallpaperState\.normalizeRotateMode\(mode\)/);
-  assert.match(indexSource, /MineradioModules\.wallpaperState\.normalizeRotateMinutes\(value\)/);
-  assert.match(indexSource, /MineradioModules\.wallpaperState\.normalizeRotateTransition\(t\)/);
-  assert.match(indexSource, /MineradioModules\.wallpaperState\.transitionLabel\(t\)/);
-  assert.match(indexSource, /MineradioModules\.wallpaperState\.beginWallpaperSwap\(/);
-  assert.match(indexSource, /MineradioModules\.homeRecommendations\.normalizeArtistNameForMatch\(name\)/);
-  assert.match(indexSource, /MineradioModules\.homeRecommendations\.artistMatchScore\(/);
-  assert.match(indexSource, /MineradioModules\.homeRecommendations\.renderRecommendationCards\(recommendations/);
-  assert.match(indexSource, /MineradioModules\.homeDiscoverView\.buildHomeTiles\(/);
-  assert.match(indexSource, /MineradioModules\.homeDiscoverView\.renderHomeTilesHtml\(/);
-  assert.match(indexSource, /MineradioModules\.homeDiscoverView\.homeRailCopy\(/);
-  assert.match(indexSource, /MineradioModules\.playlistDetailView\.renderPlaylistDetailHtml\(/);
-  assert.match(indexSource, /MineradioModules\.beatDynamics\.cameraBeatEnvelope\(/);
-  assert.match(indexSource, /MineradioModules\.beatDynamics\.pulseEnvelope\(/);
+  assert.match(appSource, /var MineradioModules = window\.MineradioModules \|\| \(window\.MineradioModules = \{\}\);/);
+  assert.match(appSource, /MineradioModules\.apiClient\.apiJson\(url, opts\)/);
+  assert.match(appSource, /MineradioModules\.appVersion\.applyAppVersionState\(updatePreviewState, data\)/);
+  assert.match(appSource, /MineradioModules\.queueState\.queueTextKey\(text\)/);
+  assert.match(appSource, /MineradioModules\.queueState\.isPlaceholderQueueText\(text\)/);
+  assert.match(appSource, /MineradioModules\.queueState\.isValidQueueSong\(song\)/);
+  assert.match(appSource, /MineradioModules\.queueState\.isUsefulRadioSong\(song\)/);
+  assert.match(appSource, /MineradioModules\.queueState\.renderQueueItemsHtml\(playQueue, currentIdx/);
+  assert.match(appSource, /MineradioModules\.queueController\.createSearchSeedQueue\(/);
+  assert.match(appSource, /MineradioModules\.queueController\.mergeRadioRecommendations\(/);
+  assert.match(appSource, /MineradioModules\.updatePanel\.formatUpdateBytes\(bytes\)/);
+  assert.match(appSource, /MineradioModules\.updatePanel\.formatUpdateSpeed\(bytesPerSecond\)/);
+  assert.match(appSource, /MineradioModules\.updatePanel\.renderUpdateNotesHtml\(/);
+  assert.match(appSource, /MineradioModules\.updatePanel\.previewView\(/);
+  assert.match(appSource, /MineradioModules\.wallpaperState\.normalizeRotateMode\(mode\)/);
+  assert.match(appSource, /MineradioModules\.wallpaperState\.normalizeRotateMinutes\(value\)/);
+  assert.match(appSource, /MineradioModules\.wallpaperState\.normalizeRotateTransition\(t\)/);
+  assert.match(appSource, /MineradioModules\.wallpaperState\.transitionLabel\(t\)/);
+  assert.match(appSource, /MineradioModules\.wallpaperState\.beginWallpaperSwap\(/);
+  assert.match(appSource, /MineradioModules\.homeRecommendations\.normalizeArtistNameForMatch\(name\)/);
+  assert.match(appSource, /MineradioModules\.homeRecommendations\.artistMatchScore\(/);
+  assert.match(appSource, /MineradioModules\.homeRecommendations\.renderRecommendationCards\(recommendations/);
+  assert.match(appSource, /MineradioModules\.homeDiscoverView\.buildHomeTiles\(/);
+  assert.match(appSource, /MineradioModules\.homeDiscoverView\.renderHomeTilesHtml\(/);
+  assert.match(appSource, /MineradioModules\.homeDiscoverView\.homeRailCopy\(/);
+  assert.match(appSource, /MineradioModules\.playlistDetailView\.renderPlaylistDetailHtml\(/);
+  assert.match(appSource, /MineradioModules\.beatDynamics\.cameraBeatEnvelope\(/);
+  assert.match(appSource, /MineradioModules\.beatDynamics\.pulseEnvelope\(/);
 });

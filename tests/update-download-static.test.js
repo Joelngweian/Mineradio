@@ -4,8 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const serverSource = [
+  'server-app.js',
+  'server/update-service.js'
+].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
+const appSource = fs.readFileSync(path.join(root, 'public', 'js', 'app.js'), 'utf8');
 const packageSource = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
 
 function extractFunction(source, name) {
@@ -51,17 +54,17 @@ test('updater still keeps GitHub direct available when mirrors are configured', 
 });
 
 test('primary update action never starts the full installer automatically', () => {
-  const source = extractFunction(indexSource, 'startUpdatePreviewDownload');
+  const source = extractFunction(appSource, 'startUpdatePreviewDownload');
   assert.doesNotMatch(source, /startRealUpdateDownload\(\)/);
   assert.match(source, /startRealUpdatePatch\(\)/);
   assert.match(source, /openManualUpdateRelease\(/);
 });
 
 test('patch failure keeps the primary update action on patch or manual release paths', () => {
-  const source = extractFunction(indexSource, 'syncUpdatePreviewStateClass');
+  const source = extractFunction(appSource, 'syncUpdatePreviewStateClass');
   assert.doesNotMatch(source, /startRealUpdateDownload/);
-  assert.match(indexSource, /function openManualUpdateRelease\(/);
-  assert.match(indexSource, /patchFallbackTried/);
+  assert.match(appSource, /function openManualUpdateRelease\(/);
+  assert.match(appSource, /patchFallbackTried/);
 });
 
 test('background update jobs convert async failures into visible job errors', () => {
@@ -81,6 +84,14 @@ test('patch updater uses only the mirror-aware patch download path', () => {
   assert.match(source, /applyPatchFilesWithRollback\(job, patch\.files\)/);
   assert.match(source, /job\.failedAttempts = failures\.slice\(-6\)/);
   assert.match(source, /setUpdateJobError\(job, err,/);
+});
+
+test('patch whitelist includes split server modules', () => {
+  const patchGeneratorSource = fs.readFileSync(path.join(root, 'build', 'generate-release-patch.js'), 'utf8');
+  assert.match(serverSource, /PATCH_ALLOWED_ROOTS = new Set\(\['public', 'desktop', 'build', 'server'\]\)/);
+  assert.match(serverSource, /PATCH_ALLOWED_FILES = new Set\(\['server\.js', 'server-app\.js', 'dj-analyzer\.js', 'package\.json', 'package-lock\.json'\]\)/);
+  assert.match(patchGeneratorSource, /PATCH_ALLOWED_ROOTS = new Set\(\['public', 'desktop', 'build', 'server'\]\)/);
+  assert.match(patchGeneratorSource, /PATCH_ALLOWED_FILES = new Set\(\['server\.js', 'server-app\.js', 'dj-analyzer\.js', 'package\.json', 'package-lock\.json'\]\)/);
 });
 
 test('patch application restores backups when any file write fails', () => {

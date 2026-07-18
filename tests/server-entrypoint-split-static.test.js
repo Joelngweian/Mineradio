@@ -1,0 +1,32 @@
+const fs = require('fs');
+const path = require('path');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const root = path.resolve(__dirname, '..');
+const entrySource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+const appPath = path.join(root, 'server-app.js');
+const updateServicePath = path.join(root, 'server', 'update-service.js');
+
+test('server entrypoint stays thin and delegates to the app module', () => {
+  assert.ok(entrySource.split(/\r?\n/).length <= 40, 'server.js should remain a thin bootstrap file');
+  assert.match(entrySource, /require\('\.\/server-app'\)/);
+  assert.match(entrySource, /require\.main === module/);
+  assert.doesNotMatch(entrySource, /http\.createServer/);
+  assert.ok(fs.existsSync(appPath), 'server-app.js should own the HTTP app wiring');
+});
+
+test('update and beat-cache implementation is outside the HTTP app file', () => {
+  assert.ok(fs.existsSync(updateServicePath), 'server/update-service.js should exist');
+  const appSource = fs.readFileSync(appPath, 'utf8');
+  const updateSource = fs.readFileSync(updateServicePath, 'utf8');
+
+  assert.match(appSource, /require\('\.\/server\/update-service'\)/);
+  assert.doesNotMatch(appSource, /async function fetchLatestUpdateInfo\(/);
+  assert.doesNotMatch(appSource, /function startUpdateDownloadJob\(/);
+  assert.doesNotMatch(appSource, /function startUpdatePatchJob\(/);
+  assert.match(updateSource, /async function fetchLatestUpdateInfo\(/);
+  assert.match(updateSource, /function startUpdateDownloadJob\(/);
+  assert.match(updateSource, /function startUpdatePatchJob\(/);
+  assert.match(updateSource, /function beatCacheRootInfo\(/);
+});

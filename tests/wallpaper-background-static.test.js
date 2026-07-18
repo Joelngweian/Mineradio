@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const appSource = fs.readFileSync(path.join(root, 'public', 'js', 'app.js'), 'utf8');
 const packageSource = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
 const wallpaperSmokePath = path.join(root, 'tests', 'smoke', 'wallpaper-transition-smoke.js');
 const wallpaperAppSmokePath = path.join(root, 'tests', 'smoke', 'wallpaper-main-smoke.js');
@@ -28,8 +28,8 @@ function extractFunction(source, name) {
 }
 
 test('wallpaper rotation preloads the next media before applying it', () => {
-  const source = extractFunction(indexSource, 'swapBackgroundWithTransition');
-  assert.match(indexSource, /function preloadWallpaperSwapMedia\(/);
+  const source = extractFunction(appSource, 'swapBackgroundWithTransition');
+  assert.match(appSource, /function preloadWallpaperSwapMedia\(/);
   assert.match(source, /preloadWallpaperSwapMedia\(item\)\.then/);
   assert.ok(
     source.indexOf('preloadWallpaperSwapMedia(item)') < source.indexOf('setCustomBackgroundMedia(media, true)'),
@@ -45,13 +45,13 @@ test('wallpaper rotation preloads the next media before applying it', () => {
 });
 
 test('fade wallpaper transition never fades the whole background layer to transparent', () => {
-  const source = extractFunction(indexSource, 'swapBgFadeDip');
+  const source = extractFunction(appSource, 'swapBgFadeDip');
   assert.doesNotMatch(source, /layer\.style\.opacity\s*=\s*['"]0['"]/);
   assert.match(source, /swapBackgroundWithTransition/);
 });
 
 test('clearing a custom wallpaper disables rotation and pending swap animation', () => {
-  const source = extractFunction(indexSource, 'clearCustomBackgroundImage');
+  const source = extractFunction(appSource, 'clearCustomBackgroundImage');
   assert.match(source, /wallpaperSwapToken\+\+/);
   assert.match(source, /stopWallpaperRotation\(\)/);
   assert.match(source, /fx\.wallpaperRotateMode\s*=\s*'off'/);

@@ -78,6 +78,8 @@
     var b = readBeat(beat);
     var src = source || 'map';
     var climax = beatClimaxScore(b, options);
+    var motionScale = clampRange(options.motionScale == null ? 1 : options.motionScale, 0.2, 1.2);
+    if (options.reduceMotion) motionScale = Math.min(motionScale, 0.42);
     var lowDrive = clamp01((b.low - 0.34) / 0.52);
     var impactDrive = clamp01((b.impact - 0.44) / 0.50);
     var bodyDrive = clamp01((b.body - 0.18) / 0.48);
@@ -101,6 +103,14 @@
       intervalScale = clampRange(intervalScale, 0.66, 1.05);
     }
 
+    ampScale = 1 + (ampScale - 1) * motionScale;
+    zoomScale = 1 + (zoomScale - 1) * motionScale;
+    phiScale = 1 + (phiScale - 1) * motionScale;
+    thetaScale = 1 + (thetaScale - 1) * motionScale;
+    rollScale = 1 + (rollScale - 1) * motionScale;
+    pulseScale = 1 + (pulseScale - 1) * motionScale;
+    intervalScale = 1 - (1 - intervalScale) * motionScale;
+
     return {
       climax: climax,
       ampScale: clampRange(ampScale, 0.82, b.dj ? 1.46 : 1.38),
@@ -113,7 +123,7 @@
       attackScale: clampRange(1 - climax * 0.22 - b.sharpness * 0.06, 0.70, 1.04),
       holdScale: clampRange(1 + lowDrive * 0.12 + climax * 0.06, 0.92, 1.18),
       releaseScale: clampRange(1 + lowDrive * 0.10 + climax * 0.14 - snapDrive * 0.08, 0.86, 1.24),
-      strongBypass: climax >= 0.64 || (b.impact >= 0.78 && b.low >= 0.58) || (b.combo === 'accent' && b.strength >= 0.78)
+      strongBypass: !options.reduceMotion && motionScale >= 0.5 && (climax >= 0.64 || (b.impact >= 0.78 && b.low >= 0.58) || (b.combo === 'accent' && b.strength >= 0.78))
     };
   }
 
