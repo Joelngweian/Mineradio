@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.3
+
+- 清理 Spotify 运行时、IPC、文档和前端入口，搜索、播放、歌单与推荐统一只走 YouTube Music，避免 Spotify 会话 403 继续干扰队列。
+- 将壁纸状态、队列状态、更新面板和首页推荐的状态模块从 `public/index.html` 拆到 `public/js/modules/`，降低后续修动画和播放状态互相影响的风险。
+- 修复清空 Wallpaper Engine / 自定义背景后仍触发背景轮播切换动画的问题；清空时会关闭轮播组、取消待执行切换并清掉过渡层。
+- 补齐 YouTube Music 登录/账号区文案，避免 `???` 占位文本出现在正式包里，并加入静态回归测试。
+
 ## v1.3.2
 
 - 修复 YouTube Music 搜索结果缺少 `artists` 字段时被前端误判为信息缺失的问题；后端现在会从搜索条目的 `flex_columns` 元数据里补回歌手。

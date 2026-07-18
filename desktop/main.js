@@ -38,8 +38,6 @@ const APP_USER_MODEL_ID = 'com.mineradio.desktop';
 const APP_ICON_ICO = path.join(__dirname, '..', 'build', 'icon.ico');
 const GOOGLE_LOGIN_PARTITION = 'persist:mineradio-google-login';
 const GOOGLE_LOGIN_URL = 'https://music.youtube.com/';
-const SPOTIFY_LOGIN_PARTITION = 'persist:mineradio-spotify-login';
-const SPOTIFY_LOGIN_URL = 'https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F';
 
 const CHROMIUM_PERFORMANCE_SWITCHES = [
   ['autoplay-policy', 'no-user-gesture-required'],
@@ -60,14 +58,6 @@ for (const [name, value] of CHROMIUM_PERFORMANCE_SWITCHES) {
 }
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
-const SPOTIFY_LOGIN_COOKIE_PRIORITY = [
-  'sp_dc',
-  'sp_key',
-  'sp_t',
-  'sp_adid',
-  'sp_gaid',
-  'sp_landing',
-];
 const GOOGLE_LOGIN_COOKIE_PRIORITY = [
   'SID',
   '__Secure-1PSID',
@@ -316,24 +306,9 @@ function parseCookieHeader(cookieText) {
   return out;
 }
 
-function spotifyCookieHasLogin(cookieText) {
-  const obj = parseCookieHeader(cookieText);
-  return !!(obj.sp_dc || obj.sp_key);
-}
-
-function spotifyCookieHasPlaybackLogin(cookieText) {
-  const obj = parseCookieHeader(cookieText);
-  return !!(obj.sp_dc || obj.sp_key);
-}
-
 function googleCookieHasLogin(cookieText) {
   const obj = parseCookieHeader(cookieText);
   return !!(obj.SID || obj.__Secure_3PSID || obj['__Secure-3PSID'] || obj.SAPISID || obj.SSID || cookieText.includes('google'));
-}
-
-function isSpotifyCookieDomain(domain) {
-  const normalized = String(domain || '').replace(/^\./, '').toLowerCase();
-  return normalized === 'spotify.com' || normalized.endsWith('.spotify.com');
 }
 
 function isGoogleCookieDomain(domain) {
@@ -362,15 +337,6 @@ function buildCookieHeaderFor(cookies, isAllowedDomain, priority) {
     .filter(([name, value]) => name && value != null && String(value) !== '')
     .map(([name, value]) => `${name}=${value}`)
     .join('; ');
-}
-
-function buildCookieHeader(cookies) {
-  return buildCookieHeaderFor(cookies, isSpotifyCookieDomain, SPOTIFY_LOGIN_COOKIE_PRIORITY);
-}
-
-async function readSpotifyLoginCookieHeader(cookieSession) {
-  const cookies = await cookieSession.cookies.get({});
-  return buildCookieHeader(cookies);
 }
 
 async function readGoogleLoginCookieHeader(cookieSession) {
@@ -458,153 +424,6 @@ async function openGoogleMusicLoginWindow(owner) {
     pollTimer = setInterval(checkCookies, 1200);
     loginWindow.loadURL(GOOGLE_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
   });
-}
-
-async function openSpotifyLoginWindow(owner) {
-  const cookieSession = session.fromPartition(SPOTIFY_LOGIN_PARTITION);
-  const initialCookie = await readSpotifyLoginCookieHeader(cookieSession);
-  if (spotifyCookieHasPlaybackLogin(initialCookie)) return { ok: true, cookie: initialCookie, reused: true };
-
-  return new Promise((resolve) => {
-    let settled = false;
-    let pollTimer = null;
-    let warmupStarted = false;
-
-    const loginWindow = new BrowserWindow({
-      width: 900,
-      height: 720,
-      minWidth: 760,
-      minHeight: 560,
-      parent: owner && !owner.isDestroyed() ? owner : undefined,
-      modal: false,
-      show: false,
-      autoHideMenuBar: true,
-      title: 'Spotify 登录',
-      backgroundColor: '#111111',
-      icon: APP_ICON_ICO,
-      webPreferences: {
-        partition: SPOTIFY_LOGIN_PARTITION,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    });
-
-    const finish = async (result) => {
-      if (settled) return;
-      settled = true;
-      if (pollTimer) clearInterval(pollTimer);
-      if (loginWindow && !loginWindow.isDestroyed()) {
-        loginWindow.close();
-      }
-      resolve(result);
-    };
-
-    const checkCookies = async () => {
-      try {
-        const cookie = await readSpotifyLoginCookieHeader(cookieSession);
-        if (spotifyCookieHasLogin(cookie)) {
-          finish({ ok: true, cookie });
-        }
-      } catch (e) {
-        console.warn('Spotify login cookie check failed:', e.message);
-      }
-    };
-
-    loginWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//i.test(url)) {
-        loginWindow.loadURL(url).catch((e) => console.warn('Spotify login popup navigation failed:', e.message));
-      } else {
-        shell.openExternal(url).catch(() => {});
-      }
-      return { action: 'deny' };
-    });
-
-    loginWindow.webContents.on('did-finish-load', () => {
-      checkCookies();
-    });
-
-    loginWindow.on('ready-to-show', () => loginWindow.show());
-    loginWindow.on('closed', async () => {
-      if (settled) return;
-      if (pollTimer) clearInterval(pollTimer);
-      try {
-        const cookie = await readSpotifyLoginCookieHeader(cookieSession);
-        resolve(spotifyCookieHasLogin(cookie)
-          ? { ok: true, cookie }
-          : { ok: false, cancelled: true, message: 'Spotify 登录窗口已关闭' });
-      } catch (e) {
-        resolve({ ok: false, error: e.message || 'Spotify 登录窗口已关闭' });
-      }
-    });
-
-    pollTimer = setInterval(checkCookies, 1200);
-    loginWindow.loadURL(SPOTIFY_LOGIN_URL).catch((e) => finish({ ok: false, error: e.message }));
-  });
-}
-
-async function openSpotifyOAuthWindow(owner, authUrl, redirectUri) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let authWindow = null;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      if (authWindow && !authWindow.isDestroyed()) authWindow.close();
-      resolve(result);
-    };
-    let redir;
-    try { redir = new URL(redirectUri); } catch (e) { resolve({ ok: false, error: 'BAD_REDIRECT_URI' }); return; }
-    const handleTarget = (event, targetUrl) => {
-      if (settled || !targetUrl) return;
-      let u;
-      try { u = new URL(targetUrl); } catch (e) { return; }
-      if (u.origin !== redir.origin || u.pathname !== redir.pathname) return;
-      if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      const error = u.searchParams.get('error');
-      const code = u.searchParams.get('code');
-      const state = u.searchParams.get('state') || '';
-      if (error) finish({ ok: false, error });
-      else if (code) finish({ ok: true, code, state });
-      else finish({ ok: false, error: 'NO_CODE' });
-    };
-    authWindow = new BrowserWindow({
-      width: 520,
-      height: 720,
-      minWidth: 420,
-      minHeight: 560,
-      parent: owner && !owner.isDestroyed() ? owner : undefined,
-      modal: false,
-      show: false,
-      autoHideMenuBar: true,
-      title: 'Spotify 授权',
-      backgroundColor: '#111111',
-      icon: APP_ICON_ICO,
-      webPreferences: {
-        partition: SPOTIFY_LOGIN_PARTITION,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    });
-    authWindow.webContents.on('will-redirect', handleTarget);
-    authWindow.webContents.on('will-navigate', handleTarget);
-    authWindow.on('ready-to-show', () => authWindow.show());
-    authWindow.on('closed', () => {
-      if (settled) return;
-      settled = true;
-      resolve({ ok: false, cancelled: true, message: 'Spotify 授权窗口已关闭' });
-    });
-    authWindow.loadURL(authUrl).catch((e) => finish({ ok: false, error: e.message }));
-  });
-}
-
-async function clearSpotifyLoginSession() {
-  const cookieSession = session.fromPartition(SPOTIFY_LOGIN_PARTITION);
-  await cookieSession.clearStorageData({
-    storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'],
-  });
-  return { ok: true };
 }
 
 async function clearGoogleLoginSession() {
@@ -1167,25 +986,6 @@ ipcMain.handle('google-account-clear-login', async () => {
   return clearGoogleLoginSession();
 });
 
-ipcMain.handle('spotify-account-open-login', async (event) => {
-  return openSpotifyLoginWindow(getSenderWindow(event));
-});
-
-ipcMain.handle('spotify-account-clear-login', async () => {
-  return clearSpotifyLoginSession();
-});
-
-ipcMain.handle('spotify-oauth-open', async (event, payload) => {
-  try {
-    const url = payload && payload.url;
-    const redirectUri = payload && payload.redirectUri;
-    if (!url || !redirectUri) return { ok: false, error: 'MISSING_OAUTH_PARAMS' };
-    return await openSpotifyOAuthWindow(getSenderWindow(event), url, redirectUri);
-  } catch (e) {
-    return { ok: false, error: e.message || 'SPOTIFY_OAUTH_FAILED' };
-  }
-});
-
 ipcMain.handle('mineradio-open-update-installer', async (_event, filePath) => {
   try {
     const target = path.resolve(String(filePath || ''));
@@ -1336,24 +1136,7 @@ async function createWindow() {
   process.env.HOST = '127.0.0.1';
   process.env.PORT = String(port);
   process.env.COOKIE_FILE = path.join(app.getPath('userData'), '.cookie');
-  process.env.SPOTIFY_COOKIE_FILE = path.join(app.getPath('userData'), '.spotify-cookie');
   process.env.MINERADIO_UPDATE_DIR = getUpdateDownloadDir();
-  try {
-    // 迁移历史命名遗留的 Spotify 会话文件（旧版误用 .qq-cookie 命名）
-    const legacyCandidates = [
-      path.join(app.getPath('userData'), '.qq-cookie'),
-      path.join(__dirname, '..', '.qq-cookie'),
-    ];
-    for (const legacy of legacyCandidates) {
-      if (!fs.existsSync(legacy)) continue;
-      if (!fs.existsSync(process.env.SPOTIFY_COOKIE_FILE)) {
-        fs.copyFileSync(legacy, process.env.SPOTIFY_COOKIE_FILE);
-      }
-      fs.unlinkSync(legacy);
-    }
-  } catch (e) {
-    console.warn('Spotify cookie migration skipped:', e.message);
-  }
 
   localServer = require(path.join(__dirname, '..', 'server.js'));
   await waitForServer(localServer);

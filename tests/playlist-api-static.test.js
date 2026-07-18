@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const queueModuleSource = fs.readFileSync(path.join(root, 'public', 'js', 'modules', 'queue-state.js'), 'utf8');
 
 test('playlist creation uses YouTube Music instead of a fake id', () => {
   assert.doesNotMatch(serverSource, /YTM_PL_\s*\+\s*Date\.now/);
@@ -105,20 +106,17 @@ test('radio endpoint falls back to song search when up-next is sparse', () => {
   assert.match(serverSource, /console\.log\('\[Radio\]'/);
 });
 
-test('music search and playlist refresh use YouTube Music only by default', () => {
+test('music search and playlist refresh use YouTube Music only', () => {
   const fetchSearchSource = indexSource.match(/async function fetchMusicSearchResults\(q, mode\) \{[\s\S]*?\n\}/)[0];
   const refreshPlaylistsSource = indexSource.match(/async function refreshUserPlaylists\(force\) \{[\s\S]*?\n\}/)[0];
-  assert.match(indexSource, /var spotifySourceEnabled = false/);
   assert.match(fetchSearchSource, /\/api\/search\?keywords=/);
-  assert.doesNotMatch(fetchSearchSource, /\/api\/spotify\/search/);
-  assert.doesNotMatch(refreshPlaylistsSource, /\/api\/spotify\/user\/playlists/);
+  assert.doesNotMatch(fetchSearchSource, /\/api\/[a-z]+\/search/);
+  assert.doesNotMatch(refreshPlaylistsSource, /\/api\/[a-z]+\/user\/playlists/);
   assert.match(indexSource, /var startupLoginStatusPromise = Promise\.all\(\[refreshLoginStatus\(\)\]\)/);
-  assert.match(indexSource, /if \(!spotifySourceEnabled\) \{[\s\S]*return spotifyLoginStatus;[\s\S]*function startSpotifyLoginStatusAutoRefresh/);
   assert.match(indexSource, /function alternatePlaybackProvider\(song\) \{\s*return 'youtube';\s*\}/);
-  assert.match(indexSource, /songProviderKey\(song\) === 'spotify' && !spotifySourceEnabled[\s\S]*youtube-rematch[\s\S]*searchAlternatePlatformSong\(song\)/);
-  assert.match(serverSource, /const SPOTIFY_SOURCE_ENABLED = process\.env\.MINERADIO_ENABLE_SPOTIFY === '1'/);
-  assert.match(serverSource, /!SPOTIFY_SOURCE_ENABLED && \(pn\.startsWith\('\/api\/spotify\/'\) \|\| pn\.startsWith\('\/api\/auth\/spotify\/'\)\)/);
-  assert.match(serverSource, /SPOTIFY_DISABLED/);
+  assert.match(indexSource, /function songProviderKey\(song\) \{[\s\S]*return 'youtube';[\s\S]*\}/);
+  assert.match(indexSource, /apiJson\('\/api\/playlist\/tracks\?id=' \+ encodeURIComponent\(id\)\)/);
+  assert.doesNotMatch(serverSource, /MINERADIO_ENABLE_[A-Z]+/);
 });
 
 test('queue rendering drops invalid unknown placeholder songs', () => {
@@ -138,7 +136,7 @@ test('queue rendering drops invalid unknown placeholder songs', () => {
   assert.match(playQueueAtSource, /normalizePlayQueue\('play-queue-at'\)/);
   assert.match(applyRadioSource, /if \(!isValidQueueSong\(s\) \|\| sameQueueSeedSong\(seedSong, s\)\) return/);
   assert.match(extendRadioSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*false/);
-  assert.match(indexSource, /unknownartist\|variousartists[\s\S]*未知歌手/);
+  assert.match(indexSource + queueModuleSource, /unknownartist[\s\S]*variousartists[\s\S]*未知歌手/);
 });
 
 test('radio recommendations are inserted even when playback setup shifts queue state', () => {
