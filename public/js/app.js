@@ -19938,13 +19938,9 @@ function relabelFxPanelControls() {
 }
 
 function getHotkeyDefaults() {
-  var defaults = { local: {}, global: {} };
-  HOTKEY_ACTIONS.forEach(function(action){
-    defaults.local[action.key] = action.local || '';
-    defaults.global[action.key] = action.global || '';
-  });
-  return defaults;
+  return MineradioModules.hotkeyState.getHotkeyDefaults(HOTKEY_ACTIONS);
 }
+
 function readHotkeySettings() {
   var defaults = getHotkeyDefaults();
   try {
@@ -19961,74 +19957,33 @@ function saveHotkeySettings() {
   try { localStorage.setItem(HOTKEY_SETTINGS_STORE_KEY, JSON.stringify(hotkeySettings || getHotkeyDefaults())); } catch (e) {}
 }
 function hotkeyActionMeta(actionKey) {
-  for (var i = 0; i < HOTKEY_ACTIONS.length; i++) {
-    if (HOTKEY_ACTIONS[i].key === actionKey) return HOTKEY_ACTIONS[i];
-  }
-  return null;
+  return MineradioModules.hotkeyState.hotkeyActionMeta(HOTKEY_ACTIONS, actionKey);
 }
+
 function isModifierKeyCode(code) {
-  return /^(ControlLeft|ControlRight|ShiftLeft|ShiftRight|AltLeft|AltRight|MetaLeft|MetaRight)$/i.test(String(code || ''));
+  return MineradioModules.hotkeyState.isModifierKeyCode(code);
 }
+
 function normalizeHotkeyEvent(e) {
-  if (!e || isModifierKeyCode(e.code)) return '';
-  var mods = [];
-  if (e.ctrlKey) mods.push('Ctrl');
-  if (e.altKey) mods.push('Alt');
-  if (e.shiftKey) mods.push('Shift');
-  if (e.metaKey) mods.push('Meta');
-  var code = e.code || '';
-  if (!code && e.key) code = String(e.key).length === 1 ? 'Key' + String(e.key).toUpperCase() : String(e.key);
-  if (!code) return '';
-  return mods.concat([code]).join('+');
+  return MineradioModules.hotkeyState.normalizeHotkeyEvent(e);
 }
+
 function hotkeyDisplayPart(part) {
-  if (part === 'Ctrl') return 'Ctrl';
-  if (part === 'Alt') return 'Alt';
-  if (part === 'Shift') return 'Shift';
-  if (part === 'Meta') return 'Win';
-  if (part === 'Space') return 'Space';
-  if (part === 'ArrowLeft') return 'Left';
-  if (part === 'ArrowRight') return 'Right';
-  if (part === 'ArrowUp') return 'Up';
-  if (part === 'ArrowDown') return 'Down';
-  if (/^Key[A-Z]$/.test(part)) return part.slice(3);
-  if (/^Digit[0-9]$/.test(part)) return part.slice(5);
-  if (/^Numpad[0-9]$/.test(part)) return 'Num' + part.slice(6);
-  return part.replace(/^Equal$/, '=').replace(/^Minus$/, '-');
+  return MineradioModules.hotkeyState.hotkeyDisplayPart(part);
 }
+
 function formatHotkey(hotkey) {
-  hotkey = String(hotkey || '').trim();
-  if (!hotkey) return '未设置';
-  return hotkey.split('+').map(hotkeyDisplayPart).join(' + ');
+  return MineradioModules.hotkeyState.formatHotkey(hotkey);
 }
+
 function hotkeyToAccelerator(hotkey) {
-  var parts = String(hotkey || '').split('+').filter(Boolean);
-  if (!parts.length) return '';
-  return parts.map(function(part){
-    if (part === 'Ctrl') return 'Control';
-    if (part === 'Alt') return 'Alt';
-    if (part === 'Shift') return 'Shift';
-    if (part === 'Meta') return 'Super';
-    if (part === 'Space') return 'Space';
-    if (part === 'ArrowLeft') return 'Left';
-    if (part === 'ArrowRight') return 'Right';
-    if (part === 'ArrowUp') return 'Up';
-    if (part === 'ArrowDown') return 'Down';
-    if (/^Key[A-Z]$/.test(part)) return part.slice(3);
-    if (/^Digit[0-9]$/.test(part)) return part.slice(5);
-    return part;
-  }).join('+');
+  return MineradioModules.hotkeyState.hotkeyToAccelerator(hotkey);
 }
+
 function hotkeyDuplicateMap(scope) {
-  var map = {};
-  var source = (hotkeySettings && hotkeySettings[scope]) || {};
-  Object.keys(source).forEach(function(action){
-    var key = String(source[action] || '').trim();
-    if (!key) return;
-    map[key] = (map[key] || 0) + 1;
-  });
-  return map;
+  return MineradioModules.hotkeyState.hotkeyDuplicateMap(hotkeySettings, scope);
 }
+
 function executeHotkeyAction(actionKey, source) {
   if (actionKey === 'togglePlay') return togglePlay();
   if (actionKey === 'prevTrack') return prevTrack();

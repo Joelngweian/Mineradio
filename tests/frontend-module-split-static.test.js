@@ -19,6 +19,7 @@ const modules = [
   ['homeRecommendations', 'js/modules/home-recommendations.js'],
   ['homeDiscoverView', 'js/modules/home-discover-view.js'],
   ['playlistDetailView', 'js/modules/playlist-detail-view.js'],
+  ['hotkeyState', 'js/modules/hotkey-state.js'],
   ['lyricsState', 'js/modules/lyrics-state.js'],
   ['beatDynamics', 'js/modules/beat-dynamics.js']
 ];
@@ -321,6 +322,26 @@ test('lyrics module parses timed lyrics and fallback lines', () => {
   assert.equal(fallback[0].text, 'Song - Artist');
 });
 
+test('hotkey state module normalizes shortcuts and duplicate bindings', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/hotkey-state.js'), { filename: 'hotkey-state.js' }).runInContext(sandbox);
+
+  const hotkeys = sandbox.window.MineradioModules.hotkeyState;
+  const actions = [
+    { key: 'togglePlay', local: 'Space', global: 'Ctrl+Space' },
+    { key: 'nextTrack', local: 'Ctrl+ArrowRight', global: '' }
+  ];
+  const defaults = hotkeys.getHotkeyDefaults(actions);
+  assert.equal(JSON.stringify(defaults.local), JSON.stringify({ togglePlay: 'Space', nextTrack: 'Ctrl+ArrowRight' }));
+  assert.equal(hotkeys.hotkeyActionMeta(actions, 'nextTrack').key, 'nextTrack');
+  assert.equal(hotkeys.normalizeHotkeyEvent({ ctrlKey: true, altKey: false, shiftKey: true, metaKey: false, code: 'KeyK' }), 'Ctrl+Shift+KeyK');
+  assert.equal(hotkeys.normalizeHotkeyEvent({ ctrlKey: true, code: 'ControlLeft' }), '');
+  assert.equal(hotkeys.formatHotkey('Ctrl+ArrowRight'), 'Ctrl + Right');
+  assert.equal(hotkeys.hotkeyToAccelerator('Ctrl+Shift+Digit2'), 'Control+Shift+2');
+  assert.equal(JSON.stringify(hotkeys.hotkeyDuplicateMap({ local: { a: 'Space', b: 'Space', c: '' } }, 'local')), JSON.stringify({ Space: 2 }));
+});
+
 test('update panel module owns copy and note rendering decisions', () => {
   const sandbox = { window: {} };
   vm.createContext(sandbox);
@@ -443,6 +464,9 @@ test('main app delegates moved helpers through MineradioModules', () => {
   assert.match(appSource, /MineradioModules\.homeDiscoverView\.renderHomeTilesHtml\(/);
   assert.match(appSource, /MineradioModules\.homeDiscoverView\.homeRailCopy\(/);
   assert.match(appSource, /MineradioModules\.playlistDetailView\.renderPlaylistDetailHtml\(/);
+  assert.match(appSource, /MineradioModules\.hotkeyState\.getHotkeyDefaults\(/);
+  assert.match(appSource, /MineradioModules\.hotkeyState\.normalizeHotkeyEvent\(/);
+  assert.match(appSource, /MineradioModules\.hotkeyState\.hotkeyToAccelerator\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.parseLyricText\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.parseYrcText\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.withLyricFallback\(/);
