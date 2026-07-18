@@ -15,7 +15,8 @@ const modules = [
   ['updatePanel', 'js/modules/update-panel.js'],
   ['homeRecommendations', 'js/modules/home-recommendations.js'],
   ['homeDiscoverView', 'js/modules/home-discover-view.js'],
-  ['playlistDetailView', 'js/modules/playlist-detail-view.js']
+  ['playlistDetailView', 'js/modules/playlist-detail-view.js'],
+  ['beatDynamics', 'js/modules/beat-dynamics.js']
 ];
 
 function readModule(relativePath) {
@@ -65,6 +66,39 @@ test('front-end feature modules expose stable namespaces', () => {
   assert.equal(sandbox.window.MineradioModules.homeRecommendations.artistMatchScore('RADWIMPS feat. Toaka', ['radwimps']), 1);
   assert.equal(sandbox.window.MineradioModules.queueController.queueItemKey({ id: 'yt1' }), 'song:yt1');
   assert.equal(sandbox.window.MineradioModules.homeDiscoverView.homeRailCopy({ recent: { name: 'A' } }, false, false).title, '接着听');
+});
+
+test('beat dynamics module boosts climax drum hits and shortens their interval', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/beat-dynamics.js'), { filename: 'beat-dynamics.js' }).runInContext(sandbox);
+
+  const beatDynamics = sandbox.window.MineradioModules.beatDynamics;
+  const weak = beatDynamics.cameraBeatEnvelope({
+    strength: 0.38,
+    confidence: 0.52,
+    impact: 0.28,
+    low: 0.24,
+    body: 0.16,
+    snap: 0.08,
+    combo: 'rebound'
+  }, 'map', { sectionEnergy: 0.18, sectionLow: 0.22, cinemaShake: 1 });
+  const climax = beatDynamics.cameraBeatEnvelope({
+    strength: 0.82,
+    confidence: 0.88,
+    impact: 0.86,
+    low: 0.84,
+    body: 0.46,
+    snap: 0.22,
+    combo: 'drop',
+    primary: true
+  }, 'map', { sectionEnergy: 0.78, sectionLow: 0.82, cinemaShake: 1 });
+
+  assert.ok(climax.climax > weak.climax, 'climax score should be higher for drop and low-energy hits');
+  assert.ok(climax.ampScale > weak.ampScale, 'climax hit should drive stronger camera amplitude');
+  assert.ok(climax.zoomScale > weak.zoomScale, 'climax hit should drive stronger push/zoom');
+  assert.ok(climax.intervalScale < weak.intervalScale, 'climax hit should allow denser beat camera scheduling');
+  assert.ok(climax.pulseScale > weak.pulseScale, 'climax hit should increase visual beat pulse');
 });
 
 test('queue module renders queue row markup outside the main html blob', () => {
@@ -267,4 +301,6 @@ test('main app delegates moved helpers through MineradioModules', () => {
   assert.match(indexSource, /MineradioModules\.homeDiscoverView\.renderHomeTilesHtml\(/);
   assert.match(indexSource, /MineradioModules\.homeDiscoverView\.homeRailCopy\(/);
   assert.match(indexSource, /MineradioModules\.playlistDetailView\.renderPlaylistDetailHtml\(/);
+  assert.match(indexSource, /MineradioModules\.beatDynamics\.cameraBeatEnvelope\(/);
+  assert.match(indexSource, /MineradioModules\.beatDynamics\.pulseEnvelope\(/);
 });
