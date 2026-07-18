@@ -36,11 +36,32 @@
     })[normalizeRotateTransition(transition)] || '交叉淡化';
   }
 
+  function wallpaperSwapExitTransform(transition) {
+    transition = normalizeRotateTransition(transition);
+    if (transition === 'zoom') return 'scale(1.10)';
+    if (transition === 'slide') return 'translateX(30%)';
+    return 'none';
+  }
+
+  function beginWallpaperSwap(options) {
+    options = options || {};
+    var transition = normalizeRotateTransition(options.transition || options.type);
+    var token = (Number(options.token) || 0) + 1;
+    return {
+      token: token,
+      transition: transition,
+      animate: transition !== 'none' && !options.reduceMotion && !options.hidden,
+      exitTransform: wallpaperSwapExitTransform(transition)
+    };
+  }
+
   global.MineradioModules.wallpaperState = {
     normalizeRotateMode: normalizeRotateMode,
     normalizeRotateMinutes: normalizeRotateMinutes,
     normalizeRotateItems: normalizeRotateItems,
     normalizeRotateTransition: normalizeRotateTransition,
-    transitionLabel: transitionLabel
+    transitionLabel: transitionLabel,
+    wallpaperSwapExitTransform: wallpaperSwapExitTransform,
+    beginWallpaperSwap: beginWallpaperSwap
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -4,9 +4,14 @@
 //  - Google Cookie 持久化及认证
 // ====================================================================
 // Windows 控制台默认代码页(GBK/936)会把 UTF-8 中文日志显示成乱码；切到 UTF-8(65001)
-if (process.platform === 'win32') {
-  try { require('child_process').execSync('chcp 65001', { stdio: 'ignore' }); } catch (e) {}
+function applyWindowsUtf8Console() {
+  if (process.stdout && process.stdout.setDefaultEncoding) process.stdout.setDefaultEncoding('utf8');
+  if (process.stderr && process.stderr.setDefaultEncoding) process.stderr.setDefaultEncoding('utf8');
+  if (process.platform === 'win32') {
+    try { require('child_process').execSync('chcp 65001', { stdio: 'ignore' }); } catch (e) {}
+  }
 }
+applyWindowsUtf8Console();
 const vm = require('vm');
 const { Innertube, Platform } = require('youtubei.js');
 const { Readable } = require('stream');
@@ -1329,7 +1334,9 @@ function startUpdateDownloadJob(info) {
   };
   updateDownloadJobs.set(job.id, job);
   trimUpdateJobs();
-  downloadUpdateAssetWithMirrors(job);
+  downloadUpdateAssetWithMirrors(job).catch(function(err) {
+    setUpdateJobError(job, err, '更新下载失败：' + classifyUpdateError(err).reason);
+  });
   return publicUpdateJob(job);
 }
 function sha256Hex(buffer) {
@@ -1360,9 +1367,12 @@ function decodePatchFile(file) {
   if (typeof file.content === 'string') return Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8');
   return null;
 }
+function patchBackupPath(job, rel) {
+  return path.join(UPDATE_PATCH_BACKUP_DIR, job.id, rel);
+}
 function backupPatchTarget(job, rel, target) {
   if (!fs.existsSync(target)) return;
-  const backup = path.join(UPDATE_PATCH_BACKUP_DIR, job.id, rel);
+  const backup = patchBackupPath(job, rel);
   fs.mkdirSync(path.dirname(backup), { recursive: true });
   fs.copyFileSync(target, backup);
 }
@@ -1383,6 +1393,31 @@ function writePatchFile(job, file) {
   if (expected && sha256Hex(fs.readFileSync(target)) !== expected) throw new Error('PATCH_WRITE_VERIFY_FAILED:' + rel);
   return rel;
 }
+function rollbackPatchBackups(job, changed) {
+  const restored = [];
+  const list = Array.isArray(changed) ? changed.slice().reverse() : [];
+  list.forEach(rel => {
+    const target = patchTargetPath(rel);
+    const backup = path.join(UPDATE_PATCH_BACKUP_DIR, job.id, rel);
+    if (!target || !fs.existsSync(backup)) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(backup, target);
+    restored.push(rel);
+  });
+  job.rollbackFiles = restored;
+  job.updatedAt = Date.now();
+  return restored;
+}
+function applyPatchFilesWithRollback(job, files) {
+  const changed = [];
+  try {
+    files.forEach(file => changed.push(writePatchFile(job, file)));
+    return changed;
+  } catch (err) {
+    rollbackPatchBackups(job, changed);
+    throw err;
+  }
+}
 function normalizePatchPayload(payload) {
   if (!payload || typeof payload !== 'object') throw new Error('INVALID_PATCH_PAYLOAD');
   const type = String(payload.type || payload.kind || '');
@@ -1395,59 +1430,6 @@ function normalizePatchPayload(payload) {
   if (!files.length) throw new Error('PATCH_EMPTY');
   if (files.length > 40) throw new Error('PATCH_TOO_MANY_FILES');
   return { from, to, files, restartRequired: payload.restartRequired !== false };
-}
-async function downloadAndApplyPatch(job) {
-  const chunks = [];
-  try {
-    fs.mkdirSync(UPDATE_DOWNLOAD_DIR, { recursive: true });
-    job.status = 'downloading';
-    job.mode = 'patch';
-    job.message = '正在下载快速补丁';
-    job.updatedAt = Date.now();
-
-    const resp = await fetch(job.downloadUrl, {
-      headers: { 'User-Agent': `Mineradio/${APP_VERSION}` },
-    });
-    if (!resp.ok) throw new Error('Patch download failed ' + resp.status);
-
-    job.total = parseInt(resp.headers.get('content-length') || '0', 10) || job.total || 0;
-    job.received = 0;
-    const reader = resp.body.getReader();
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      const buf = Buffer.from(chunk.value);
-      job.received += buf.length;
-      if (job.received > PATCH_MAX_BYTES) throw new Error('PATCH_TOO_LARGE');
-      chunks.push(buf);
-      job.progress = job.total > 0
-        ? Math.max(1, Math.min(84, Math.round((job.received / job.total) * 84)))
-        : Math.max(1, Math.min(76, Math.round(Math.log10(job.received / 1024 + 1) * 24)));
-      job.updatedAt = Date.now();
-    }
-
-    const raw = Buffer.concat(chunks);
-    const expectedPatchHash = String(job.sha256 || '').trim().toLowerCase();
-    if (expectedPatchHash && sha256Hex(raw) !== expectedPatchHash) throw new Error('PATCH_PACKAGE_HASH_MISMATCH');
-    const patch = normalizePatchPayload(JSON.parse(raw.toString('utf8').replace(/^\uFEFF/, '')));
-    job.version = patch.to;
-    job.message = '正在应用快速补丁';
-    job.progress = 88;
-    job.updatedAt = Date.now();
-    const changed = [];
-    patch.files.forEach(file => changed.push(writePatchFile(job, file)));
-    job.changedFiles = changed;
-    job.status = 'ready';
-    job.progress = 100;
-    job.restartRequired = patch.restartRequired;
-    job.message = patch.restartRequired ? '快速补丁已应用，重启后生效' : '快速补丁已应用';
-    job.updatedAt = Date.now();
-  } catch (e) {
-    job.status = 'error';
-    job.error = e.message || 'PATCH_APPLY_FAILED';
-    job.message = '快速补丁失败，可改用完整安装包';
-    job.updatedAt = Date.now();
-  }
 }
 async function downloadPatchBufferFromCandidate(job, candidate, index, total) {
   ensureMirrorCanBeVerified(job, candidate);
@@ -1508,8 +1490,7 @@ async function downloadAndApplyPatchWithMirrors(job) {
       job.progress = 88;
       job.etaSeconds = 0;
       job.updatedAt = Date.now();
-      const changed = [];
-      patch.files.forEach(file => changed.push(writePatchFile(job, file)));
+      const changed = applyPatchFilesWithRollback(job, patch.files);
       job.changedFiles = changed;
       job.status = 'ready';
       job.progress = 100;
@@ -1571,7 +1552,9 @@ function startUpdatePatchJob(info) {
   };
   updateDownloadJobs.set(job.id, job);
   trimUpdateJobs();
-  downloadAndApplyPatchWithMirrors(job);
+  downloadAndApplyPatchWithMirrors(job).catch(function(err) {
+    setUpdateJobError(job, err, '快速补丁失败：' + classifyUpdateError(err).reason);
+  });
   return publicUpdateJob(job);
 }
 function readRequestBody(req) {

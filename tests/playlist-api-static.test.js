@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 const queueModuleSource = fs.readFileSync(path.join(root, 'public', 'js', 'modules', 'queue-state.js'), 'utf8');
+const queueControllerSource = fs.readFileSync(path.join(root, 'public', 'js', 'modules', 'queue-controller.js'), 'utf8');
 
 test('playlist creation uses YouTube Music instead of a fake id', () => {
   assert.doesNotMatch(serverSource, /YTM_PL_\s*\+\s*Date\.now/);
@@ -61,7 +62,8 @@ test('search playback immediately rebuilds queue from the selected song radio', 
   assert.match(fetchRadioSource, /params\.push\('title=' \+ encodeURIComponent\(title\)\)/);
   assert.match(fetchRadioSource, /params\.push\('artist=' \+ encodeURIComponent\(artist\)\)/);
   assert.match(fetchRadioSource, /return \(\(r && r\.songs\) \|\| \[\]\)\.filter\(isUsefulRadioSong\)/);
-  assert.match(indexSource, /var seedSong = cloneSong\(song\);\s*playQueue = \[seedSong\];\s*currentIdx = 0;/);
+  assert.match(indexSource, /MineradioModules\.queueController\.createSearchSeedQueue\(song, cloneSong\)/);
+  assert.match(indexSource, /var seedSong = seedState\.seedSong;\s*playQueue = seedState\.queue;\s*currentIdx = seedState\.currentIdx;/);
   assert.match(indexSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*true/);
   assert.match(indexSource, /playQueueAt\(currentIdx\);\s*primeQueueWithSeedRadio\(seedSong\);/);
   assert.match(indexSource, /maybeExtendQueueWithRadio\(song\)[\s\S]*currentIdx < playQueue\.length - 1/);
@@ -134,7 +136,8 @@ test('queue rendering drops invalid unknown placeholder songs', () => {
   assert.match(renderQueueSource, /normalizePlayQueue\('render-queue-panel'\)/);
   assert.match(renderMiniQueueSource, /normalizePlayQueue\('render-mini-queue'\)/);
   assert.match(playQueueAtSource, /normalizePlayQueue\('play-queue-at'\)/);
-  assert.match(applyRadioSource, /if \(!isValidQueueSong\(s\) \|\| sameQueueSeedSong\(seedSong, s\)\) return/);
+  assert.match(applyRadioSource, /MineradioModules\.queueController\.mergeRadioRecommendations\(playQueue, currentIdx, seedSong, recs/);
+  assert.match(queueControllerSource, /if \(!isValid\(song\) \|\| sameQueueSeedSong\(seedSong, song, opts\)\) return/);
   assert.match(extendRadioSource, /applyRadioRecommendations\(song,\s*recs,\s*\{[\s\S]*replaceTail:\s*false/);
   assert.match(indexSource + queueModuleSource, /unknownartist[\s\S]*variousartists[\s\S]*未知歌手/);
 });

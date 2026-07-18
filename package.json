@@ -10,7 +10,10 @@
     "start": "electron .",
     "build:win": "electron-builder --win nsis",
     "build:win:dir": "electron-builder --win dir",
-    "patch:release": "node build/generate-release-patch.js"
+    "patch:release": "node build/generate-release-patch.js",
+    "smoke:wallpaper": "node tests/smoke/wallpaper-transition-smoke.js",
+    "smoke:wallpaper:app": "node tests/smoke/wallpaper-main-smoke.js",
+    "smoke:search-radio": "node tests/smoke/search-radio-flow-smoke.js"
   },
   "build": {
     "appId": "com.mineradio.desktop",

@@ -5,6 +5,10 @@ const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
 const indexSource = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const packageSource = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+const wallpaperSmokePath = path.join(root, 'tests', 'smoke', 'wallpaper-transition-smoke.js');
+const wallpaperAppSmokePath = path.join(root, 'tests', 'smoke', 'wallpaper-main-smoke.js');
+const searchRadioSmokePath = path.join(root, 'tests', 'smoke', 'search-radio-flow-smoke.js');
 
 function extractFunction(source, name) {
   const marker = 'function ' + name + '(';
@@ -54,4 +58,34 @@ test('clearing a custom wallpaper disables rotation and pending swap animation',
   assert.match(source, /fx\.wallpaperRotateItems\s*=\s*\[\]/);
   assert.match(source, /setCustomBackgroundMedia\(null/);
   assert.match(source, /updateWallpaperRotateUi\(\)/);
+});
+
+test('wallpaper transition has a runnable visual smoke guard', () => {
+  assert.ok(fs.existsSync(wallpaperSmokePath), 'wallpaper transition smoke script should exist');
+  const smokeSource = fs.readFileSync(wallpaperSmokePath, 'utf8');
+  assert.match(packageSource, /"smoke:wallpaper": "node tests\/smoke\/wallpaper-transition-smoke\.js"/);
+  assert.match(smokeSource, /chromium\.launch/);
+  assert.match(smokeSource, /custom-bg-fx/);
+  assert.match(smokeSource, /page\.screenshot/);
+  assert.match(smokeSource, /transparentSamples/);
+  assert.match(smokeSource, /overlay should cover the previous wallpaper/);
+});
+
+test('wallpaper transition has a main-page smoke guard', () => {
+  assert.ok(fs.existsSync(wallpaperAppSmokePath), 'main wallpaper smoke script should exist');
+  const smokeSource = fs.readFileSync(wallpaperAppSmokePath, 'utf8');
+  assert.match(packageSource, /"smoke:wallpaper:app": "node tests\/smoke\/wallpaper-main-smoke\.js"/);
+  assert.match(smokeSource, /loadFile\(path\.join\(root, 'public', 'index\.html'\)\)/);
+  assert.match(smokeSource, /swapBackgroundWithTransition/);
+  assert.match(smokeSource, /custom-bg-fx/);
+  assert.match(smokeSource, /capturePage/);
+});
+
+test('search playback radio flow has a runnable smoke guard', () => {
+  assert.ok(fs.existsSync(searchRadioSmokePath), 'search radio smoke script should exist');
+  const smokeSource = fs.readFileSync(searchRadioSmokePath, 'utf8');
+  assert.match(packageSource, /"smoke:search-radio": "node tests\/smoke\/search-radio-flow-smoke\.js"/);
+  assert.match(smokeSource, /createSearchSeedQueue/);
+  assert.match(smokeSource, /mergeRadioRecommendations/);
+  assert.match(smokeSource, /assert/);
 });

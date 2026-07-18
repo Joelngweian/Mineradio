@@ -64,6 +64,47 @@ test('patch failure keeps the primary update action on patch or manual release p
   assert.match(indexSource, /patchFallbackTried/);
 });
 
+test('background update jobs convert async failures into visible job errors', () => {
+  const installerSource = extractFunction(serverSource, 'startUpdateDownloadJob');
+  assert.match(installerSource, /downloadUpdateAssetWithMirrors\(job\)\.catch\(/);
+  assert.match(installerSource, /setUpdateJobError\(job, err,/);
+
+  const patchSource = extractFunction(serverSource, 'startUpdatePatchJob');
+  assert.match(patchSource, /downloadAndApplyPatchWithMirrors\(job\)\.catch\(/);
+  assert.match(patchSource, /setUpdateJobError\(job, err,/);
+});
+
+test('patch updater uses only the mirror-aware patch download path', () => {
+  assert.doesNotMatch(serverSource, /async function downloadAndApplyPatch\(job\)/);
+  const source = extractFunction(serverSource, 'downloadAndApplyPatchWithMirrors');
+  assert.match(source, /downloadPatchBufferFromCandidate\(job, candidate, i, candidates\.length\)/);
+  assert.match(source, /applyPatchFilesWithRollback\(job, patch\.files\)/);
+  assert.match(source, /job\.failedAttempts = failures\.slice\(-6\)/);
+  assert.match(source, /setUpdateJobError\(job, err,/);
+});
+
+test('patch application restores backups when any file write fails', () => {
+  const applySource = extractFunction(serverSource, 'applyPatchFilesWithRollback');
+  assert.match(applySource, /try \{/);
+  assert.match(applySource, /writePatchFile\(job, file\)/);
+  assert.match(applySource, /rollbackPatchBackups\(job, changed\)/);
+  assert.match(applySource, /throw err/);
+
+  const rollbackSource = extractFunction(serverSource, 'rollbackPatchBackups');
+  assert.match(rollbackSource, /UPDATE_PATCH_BACKUP_DIR/);
+  assert.match(rollbackSource, /fs\.copyFileSync\(backup, target\)/);
+  assert.match(rollbackSource, /job\.rollbackFiles = restored/);
+});
+
+test('server startup uses a testable utf8 console helper on Windows', () => {
+  assert.match(serverSource, /function applyWindowsUtf8Console\(\)/);
+  const source = extractFunction(serverSource, 'applyWindowsUtf8Console');
+  assert.match(source, /process\.stdout\.setDefaultEncoding\('utf8'\)/);
+  assert.match(source, /process\.stderr\.setDefaultEncoding\('utf8'\)/);
+  assert.match(source, /chcp 65001/);
+  assert.match(serverSource, /applyWindowsUtf8Console\(\);/);
+});
+
 test('release patch generator is wired into package scripts', () => {
   assert.match(packageSource, /"patch:release": "node build\/generate-release-patch\.js"/);
 });
