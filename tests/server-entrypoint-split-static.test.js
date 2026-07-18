@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '..');
 const entrySource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const appPath = path.join(root, 'server-app.js');
 const updateServicePath = path.join(root, 'server', 'update-service.js');
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 test('server entrypoint stays thin and delegates to the app module', () => {
   assert.ok(entrySource.split(/\r?\n/).length <= 40, 'server.js should remain a thin bootstrap file');
@@ -29,4 +30,12 @@ test('update and beat-cache implementation is outside the HTTP app file', () => 
   assert.match(updateSource, /function startUpdateDownloadJob\(/);
   assert.match(updateSource, /function startUpdatePatchJob\(/);
   assert.match(updateSource, /function beatCacheRootInfo\(/);
+});
+
+test('packaged app includes split server files', () => {
+  const files = packageJson && packageJson.build && packageJson.build.files;
+  assert.ok(Array.isArray(files), 'electron-builder files list should be explicit');
+  assert.ok(files.includes('server.js'), 'server.js entrypoint should be packaged');
+  assert.ok(files.includes('server-app.js'), 'server-app.js HTTP app should be packaged');
+  assert.ok(files.includes('server/**/*'), 'server service modules should be packaged');
 });
