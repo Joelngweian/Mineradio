@@ -19,6 +19,7 @@ const modules = [
   ['homeRecommendations', 'js/modules/home-recommendations.js'],
   ['homeDiscoverView', 'js/modules/home-discover-view.js'],
   ['playlistDetailView', 'js/modules/playlist-detail-view.js'],
+  ['lyricsState', 'js/modules/lyrics-state.js'],
   ['beatDynamics', 'js/modules/beat-dynamics.js']
 ];
 
@@ -294,6 +295,32 @@ test('playlist detail view module renders detail header and lazy rows', () => {
   assert.match(html, /data-pl-detail-load-more="1"/);
 });
 
+test('lyrics module parses timed lyrics and fallback lines', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/lyrics-state.js'), { filename: 'lyrics-state.js' }).runInContext(sandbox);
+
+  const lyrics = sandbox.window.MineradioModules.lyricsState;
+  const lrc = lyrics.parseLyricText('[00:01.50]Hello\n[00:03.000][00:04.000]World');
+  assert.equal(lrc.length, 3);
+  assert.equal(lrc[0].t, 1.5);
+  assert.equal(lrc[0].text, 'Hello');
+  assert.equal(lrc[1].text, 'World');
+  assert.ok(lrc[0].duration > 0);
+
+  const yrc = lyrics.parseYrcText('[1000,1200](1000,400,0)Ka(1400,400,0)na');
+  assert.equal(yrc.length, 1);
+  assert.equal(yrc[0].source, 'yrc-word');
+  assert.equal(yrc[0].text, 'Kana');
+  assert.equal(yrc[0].words.length, 2);
+  assert.ok(lyrics.getLyricLineProgress(yrc[0], null, 1.2, 6) > 0);
+
+  const fallback = lyrics.withLyricFallback([{ t: 0, text: '暂无歌词' }], function() { return 'Song - Artist'; });
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0].fallback, true);
+  assert.equal(fallback[0].text, 'Song - Artist');
+});
+
 test('update panel module owns copy and note rendering decisions', () => {
   const sandbox = { window: {} };
   vm.createContext(sandbox);
@@ -416,6 +443,10 @@ test('main app delegates moved helpers through MineradioModules', () => {
   assert.match(appSource, /MineradioModules\.homeDiscoverView\.renderHomeTilesHtml\(/);
   assert.match(appSource, /MineradioModules\.homeDiscoverView\.homeRailCopy\(/);
   assert.match(appSource, /MineradioModules\.playlistDetailView\.renderPlaylistDetailHtml\(/);
+  assert.match(appSource, /MineradioModules\.lyricsState\.parseLyricText\(/);
+  assert.match(appSource, /MineradioModules\.lyricsState\.parseYrcText\(/);
+  assert.match(appSource, /MineradioModules\.lyricsState\.withLyricFallback\(/);
+  assert.match(appSource, /MineradioModules\.lyricsState\.getLyricLineProgress\(/);
   assert.match(appSource, /MineradioModules\.beatDynamics\.cameraBeatEnvelope\(/);
   assert.match(appSource, /MineradioModules\.beatDynamics\.pulseEnvelope\(/);
 });
