@@ -20,6 +20,7 @@ const modules = [
   ['homeDiscoverView', 'js/modules/home-discover-view.js'],
   ['playlistDetailView', 'js/modules/playlist-detail-view.js'],
   ['hotkeyState', 'js/modules/hotkey-state.js'],
+  ['fxArchiveState', 'js/modules/fx-archive-state.js'],
   ['lyricsState', 'js/modules/lyrics-state.js'],
   ['beatDynamics', 'js/modules/beat-dynamics.js']
 ];
@@ -342,6 +343,108 @@ test('hotkey state module normalizes shortcuts and duplicate bindings', () => {
   assert.equal(JSON.stringify(hotkeys.hotkeyDuplicateMap({ local: { a: 'Space', b: 'Space', c: '' } }, 'local')), JSON.stringify({ Space: 2 }));
 });
 
+test('fx archive module normalizes visual preset snapshots', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/fx-archive-state.js'), { filename: 'fx-archive-state.js' }).runInContext(sandbox);
+
+  const archive = sandbox.window.MineradioModules.fxArchiveState;
+  const config = {
+    visualPresetSchema: 'schema-v2',
+    presetCount: 7,
+    defaults: {
+      intensity: 1,
+      cinemaShake: 0.5,
+      depth: 1,
+      point: 1,
+      speed: 1,
+      twist: 0.1,
+      color: 1,
+      scatter: 0.1,
+      bgFade: 0.4,
+      bloomStrength: 0.5,
+      lyricGlowStrength: 0.3,
+      lyricScale: 1,
+      lyricOffsetX: 0,
+      lyricOffsetY: 0,
+      lyricOffsetZ: 0,
+      lyricTiltX: 0,
+      lyricTiltY: 0,
+      lyricLetterSpacing: 0,
+      lyricLineHeight: 1,
+      lyricWeight: 700,
+      backgroundOpacity: 1,
+      controlGlassChromaticOffset: 20,
+      wallpaperRotateMinutes: 10,
+      desktopLyricsSize: 1,
+      desktopLyricsOpacity: 0.7,
+      desktopLyricsY: 0.5,
+      performanceBackground: 'auto',
+      performanceQuality: 'balanced',
+      shelf: 'side',
+      shelfCameraMode: 'dynamic',
+      shelfPresence: 'auto',
+      shelfSize: 1,
+      shelfOffsetX: 0,
+      shelfOffsetY: 0,
+      shelfOffsetZ: 0,
+      shelfAngleY: 0,
+      shelfOpacity: 0.8,
+      shelfBgOpacity: 0.5,
+      cam: 'off'
+    },
+    helpers: {
+      normalizeCoverResolution: value => Number(value) || 64,
+      normalizeHexColor: value => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? value : '#ffffff',
+      normalizeLyricFontKey: value => value === 'serif' ? 'serif' : 'sans',
+      normalizeWallpaperRotateMode: value => value === 'shuffle' ? 'shuffle' : 'off',
+      normalizeWallpaperRotateMinutes: value => Math.max(1, Math.min(60, Number(value) || 10)),
+      normalizeWallpaperRotateItems: value => Array.isArray(value) ? value.slice(0, 2) : [],
+      normalizeWallpaperRotateTransition: value => value === 'slide' ? 'slide' : 'crossfade',
+      normalizeHomeHeroBg: value => String(value || '').trim(),
+      normalizeDesktopLyricsFps: value => value === 60 ? 60 : 30,
+      normalizePerformanceBackgroundMode: value => value === 'keep' ? 'keep' : 'auto',
+      normalizePerformanceQuality: value => value === 'ultra' ? 'ultra' : 'balanced'
+    }
+  };
+
+  assert.equal(archive.defaultUserFxArchiveName(1), '用户存档 2');
+  assert.equal(archive.normalizeUserFxArchiveName('  very   long archive name here  ', 0), 'very long archive name here');
+  assert.equal(archive.archiveNumber({ n: 99 }, 'n', 1, 0, 2), 2);
+  assert.equal(archive.archiveMode({ mode: 'bad' }, 'mode', /^(on|off)$/, 'off'), 'off');
+  assert.equal(archive.safeArchiveFileName('A<>B?.json'), 'A-B-.json.json');
+
+  const normalized = archive.normalizeFxArchiveSnapshot({
+    visualPresetSchema: 'old',
+    preset: 3,
+    intensity: 9,
+    lyricColorMode: 'custom',
+    lyricColor: '#123456',
+    wallpaperRotateMode: 'shuffle',
+    wallpaperRotateMinutes: 99,
+    wallpaperRotateItems: ['a', 'b', 'c'],
+    wallpaperRotateTransition: 'slide',
+    desktopLyricsFps: 60,
+    performanceBackground: 'keep',
+    performanceQuality: 'ultra',
+    shelf: 'bad'
+  }, config);
+
+  assert.equal(normalized.visualPresetSchema, 'schema-v2');
+  assert.equal(normalized.preset, 5);
+  assert.equal(normalized.intensity, 1.6);
+  assert.equal(normalized.lyricColor, '#123456');
+  assert.equal(normalized.wallpaperRotateMode, 'shuffle');
+  assert.equal(normalized.wallpaperRotateMinutes, 60);
+  assert.equal(normalized.wallpaperRotateItems.length, 2);
+  assert.equal(normalized.wallpaperRotateTransition, 'slide');
+  assert.equal(normalized.desktopLyricsFps, 60);
+  assert.equal(normalized.performanceBackground, 'keep');
+  assert.equal(normalized.liveBackgroundKeep, true);
+  assert.equal(normalized.performanceQuality, 'ultra');
+  assert.equal(normalized.shelf, 'side');
+});
+
 test('update panel module owns copy and note rendering decisions', () => {
   const sandbox = { window: {} };
   vm.createContext(sandbox);
@@ -467,6 +570,8 @@ test('main app delegates moved helpers through MineradioModules', () => {
   assert.match(appSource, /MineradioModules\.hotkeyState\.getHotkeyDefaults\(/);
   assert.match(appSource, /MineradioModules\.hotkeyState\.normalizeHotkeyEvent\(/);
   assert.match(appSource, /MineradioModules\.hotkeyState\.hotkeyToAccelerator\(/);
+  assert.match(appSource, /MineradioModules\.fxArchiveState\.normalizeFxArchiveSnapshot\(/);
+  assert.match(appSource, /MineradioModules\.fxArchiveState\.safeArchiveFileName\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.parseLyricText\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.parseYrcText\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.withLyricFallback\(/);
