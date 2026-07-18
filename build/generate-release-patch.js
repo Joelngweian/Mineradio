@@ -8,6 +8,7 @@ const { execFileSync } = require('child_process');
 const PATCH_ALLOWED_ROOTS = new Set(['public', 'desktop', 'build']);
 const PATCH_ALLOWED_FILES = new Set(['server.js', 'dj-analyzer.js', 'package.json', 'package-lock.json']);
 const PATCH_BLOCKED_EXT = /\.(exe|dll|node|msi|bat|cmd|ps1|pfx|pem|key)$/i;
+const GIT_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
 
 function usage() {
   console.error('Usage: node build/generate-release-patch.js <from-ref> <to-ref> [output-dir]');
@@ -19,7 +20,10 @@ function normalizeVersion(value) {
 }
 
 function runGit(args) {
-  return execFileSync('git', args, { cwd: path.resolve(__dirname, '..') });
+  return execFileSync('git', args, {
+    cwd: path.resolve(__dirname, '..'),
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  });
 }
 
 function gitText(args) {
