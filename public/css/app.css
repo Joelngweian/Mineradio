@@ -1253,6 +1253,14 @@ body.desktop-shell.diy-mode #bottom-bar.stage-mode{left:50%;width:min(1080px,cal
 .fx-fold-body .fx-section-label{margin-top:12px}
 .fx-fold-body .fx-section-label:first-child{margin-top:4px}
 .fx-fold .fx-slider label{font-size:10.5px;color:rgba(255,255,255,.58)}
+.gm-hint{font-size:10.5px;line-height:1.6;color:rgba(255,255,255,.42);margin:2px 0 12px}
+.gm-install-row{display:flex;align-items:center;gap:10px;margin-top:8px}
+.gm-install-row .fx-mini-btn{flex:0 0 auto;width:auto;min-width:96px}
+.gm-install-row small{font-size:10.5px;color:rgba(255,255,255,.5);letter-spacing:.2px}
+#game-mode-status{transition:color .25s ease}
+#fx-game-fold.gm-live .fx-fold-head #game-mode-status{color:var(--champagne,#f4d28a)}
+#game-mode-duck-slider{display:none}
+#fx-game-fold.gm-duck #game-mode-duck-slider{display:flex}
 .fx-actions{display:flex;gap:8px;margin-top:14px}
 .fx-mini-btn{flex:1;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:rgba(255,255,255,.78);font-size:11.5px;cursor:pointer;font-family:inherit;letter-spacing:.3px}
 .fx-mini-btn:hover{background:rgba(255,255,255,.1);color:#fff}

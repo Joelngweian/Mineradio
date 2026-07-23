@@ -14997,7 +14997,7 @@ function updateSearchModeTabs() {
   if ($input) {
     $input.placeholder = searchMode === 'podcast'
       ? '搜索播客、电台...'
-      : (searchMode === 'youtube' ? '搜索 YouTube Music...' : '搜索歌曲、歌手...');
+      : (searchMode === 'youtube' ? '搜索整个 YouTube（含 YTM 没有的歌）...' : '搜索歌曲、歌手...');
   }
   requestAnimationFrame(updateSearchPillGlassDisplacementMap);
 }
@@ -15348,8 +15348,9 @@ function mergeSongSearchResults(youtubeSongs, limit, q) {
   return out.slice(0, limit);
 }
 async function fetchMusicSearchResults(q, mode) {
-  var ytm = await apiJson('/api/search?keywords=' + encodeURIComponent(q) + '&limit=18');
-  return mergeSongSearchResults((ytm && ytm.songs) || [], 18, q);
+  var endpoint = mode === 'youtube' ? '/api/search/youtube' : '/api/search';
+  var res = await apiJson(endpoint + '?keywords=' + encodeURIComponent(q) + '&limit=18');
+  return mergeSongSearchResults((res && res.songs) || [], 18, q);
 }
 function renderSongSearchResults(songs) {
   playlist = songs || [];
@@ -16428,6 +16429,7 @@ async function togglePlay() {
   playToggleBusy = true;
   try {
     forcePlaybackControlsInteractive();
+    if (gameModeController) gameModeController.noteManualToggle();
     if ((!audio || !audio.src) && playQueue.length && currentIdx >= 0) {
       await playQueueAt(currentIdx, { manual: true });
       return;
@@ -24196,6 +24198,188 @@ function toggleFullscreen() {
 })();
 
 // ============================================================
+//  游戏模式（CS2）— 交火时自动暂停 / 压低音乐，阵亡·候场·菜单时恢复
+// ============================================================
+var gameModeController = null;
+var gameModePausedByUs = false;   // 当前暂停是否由游戏模式发起
+var gameModeDucked = false;
+var gameModeDuckHoldTimer = 0;
+
+function gameModeUserVolume() {
+  return (typeof targetVolume === 'number' && targetVolume >= 0) ? targetVolume : 0.8;
+}
+function gameModeClearDuckHold() {
+  if (gameModeDuckHoldTimer) { clearInterval(gameModeDuckHoldTimer); gameModeDuckHoldTimer = 0; }
+  gameModeDucked = false;
+}
+function gameModeEnterPause() {
+  gameModeClearDuckHold();
+  if (audio && audio.src && !audio.paused && playing) {
+    gameModePausedByUs = true;
+    fadeOutAndPauseAudio().then(function() {
+      playing = false;
+      setPlayIcon(false);
+      hideLoading();
+      try { syncPlaybackStateFromAudioEvent('game-mode-pause'); } catch (e) {}
+    });
+  }
+}
+function gameModeEnterDuck(frac) {
+  gameModePausedByUs = false;
+  frac = clampRange(Number(frac) || 0.25, 0.05, 1);
+  gameModeDucked = true;
+  rampAudioOutputGain(gameModeUserVolume() * frac, 500);
+  if (gameModeDuckHoldTimer) clearInterval(gameModeDuckHoldTimer);
+  // 曲目切换 / 淡入等会把输出增益复位，这里周期性重申压低值
+  gameModeDuckHoldTimer = setInterval(function() {
+    if (!gameModeDucked || !audio || audio.paused) return;
+    rampAudioOutputGain(gameModeUserVolume() * frac, 300);
+  }, 1500);
+}
+function gameModeRelease() {
+  if (gameModeDucked) {
+    gameModeClearDuckHold();
+    rampAudioOutputGain(gameModeUserVolume(), 500);
+  }
+  if (gameModePausedByUs) {
+    gameModePausedByUs = false;
+    if (audio && audio.src && audio.paused) attemptAudioPlay({ manual: false, silent: true });
+  }
+}
+function gameModeOnIntent(intent) {
+  if (!intent) return;
+  if (intent.suppress) {
+    if (intent.behavior === 'duck') gameModeEnterDuck(intent.duckVolume);
+    else gameModeEnterPause();
+  } else {
+    gameModeRelease();
+  }
+}
+function renderGameModeStatus(status) {
+  if (!status) return;
+  var el = document.getElementById('game-mode-status');
+  if (el) el.textContent = status.label || '未检测到游戏';
+  var fold = document.getElementById('fx-game-fold');
+  if (fold) fold.classList.toggle('gm-live', !!(status.derived && status.derived.engaged));
+}
+function refreshGameModeUiFromSettings() {
+  if (!ensureGameModeController()) return;
+  var s = gameModeController.getSettings();
+  var setOn = function(id, on) { var el = document.getElementById(id); if (el) el.classList.toggle('on', !!on); };
+  setOn('t-gameMode', s.enabled);
+  setOn('t-gameModeCs2', s.cs2);
+  setOn('t-gameModePlayDead', s.playWhenDead);
+  var seg = document.getElementById('game-mode-behavior-seg');
+  if (seg) {
+    var btns = seg.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-game-behavior') === s.behavior);
+    }
+  }
+  var fold = document.getElementById('fx-game-fold');
+  if (fold) fold.classList.toggle('gm-duck', s.behavior === 'duck');
+  var slider = document.getElementById('fx-gameduck');
+  if (slider) {
+    slider.value = s.duckVolume;
+    var out = slider.parentElement && slider.parentElement.querySelector('output');
+    if (out) out.textContent = Math.round(s.duckVolume * 100) + '%';
+  }
+}
+function ensureGameModeController() {
+  // 兜底：若启动时初始化被跳过/失败，首次点击时补一次，避免开关点了没反应
+  if (!gameModeController) { try { initGameMode(); } catch (e) { console.warn('[GameMode] init failed', e); } }
+  return gameModeController;
+}
+function toggleGameMode() {
+  if (!ensureGameModeController()) return;
+  var was = gameModeController.getSettings().enabled;
+  gameModeController.update({ enabled: !was });
+  refreshGameModeUiFromSettings();
+  showToast(!was ? '游戏模式已开启' : '游戏模式已关闭');
+  if (!was) refreshCs2InstallStatus();
+}
+function toggleGameModeCs2() {
+  if (!ensureGameModeController()) return;
+  var was = gameModeController.getSettings().cs2;
+  gameModeController.update({ cs2: !was });
+  refreshGameModeUiFromSettings();
+}
+function toggleGameModePlayDead() {
+  if (!ensureGameModeController()) return;
+  var was = gameModeController.getSettings().playWhenDead;
+  gameModeController.update({ playWhenDead: !was });
+  refreshGameModeUiFromSettings();
+  showToast(!was ? '观战时播放歌曲' : '观战时静音');
+}
+function setGameModeBehavior(behavior) {
+  if (!ensureGameModeController()) return;
+  gameModeController.update({ behavior: behavior === 'duck' ? 'duck' : 'pause' });
+  refreshGameModeUiFromSettings();
+}
+async function refreshCs2InstallStatus() {
+  var el = document.getElementById('game-mode-install-status');
+  var btn = document.getElementById('game-mode-install-btn');
+  try {
+    var r = await fetch('/api/gsi/status').then(function(x) { return x.json(); });
+    if (el) {
+      if (r && r.installed) el.textContent = r.portMatches ? '已安装 ✓' : '端口已变，请重新安装';
+      else if (r && r.found) el.textContent = '未安装';
+      else el.textContent = '未找到 CS2';
+    }
+    if (btn) btn.textContent = (r && r.installed) ? '重新安装 / 检测' : '安装 CS2 集成';
+  } catch (e) {
+    if (el) el.textContent = '检测失败';
+  }
+}
+async function installCs2Integration() {
+  var btn = document.getElementById('game-mode-install-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '安装中…'; }
+  try {
+    var r = await fetch('/api/gsi/install', { method: 'POST' }).then(function(x) { return x.json(); });
+    if (r && r.ok) showToast('CS2 集成已安装，重启 CS2 后生效');
+    else if (r && r.error === 'CS2_NOT_FOUND') showToast('未找到 CS2 目录，请手动放置配置文件');
+    else showToast('安装失败：' + (r && (r.message || r.error) || '未知错误'));
+  } catch (e) {
+    showToast('安装失败：' + e.message);
+  }
+  if (btn) btn.disabled = false;
+  refreshCs2InstallStatus();
+}
+function bindGameModeControls() {
+  var slider = document.getElementById('fx-gameduck');
+  if (slider) {
+    slider.addEventListener('input', function() {
+      if (!ensureGameModeController()) return;
+      var v = clampRange(parseFloat(slider.value), 0.05, 1);
+      gameModeController.update({ duckVolume: v });
+      var out = slider.parentElement && slider.parentElement.querySelector('output');
+      if (out) out.textContent = Math.round(v * 100) + '%';
+    });
+  }
+  var seg = document.getElementById('game-mode-behavior-seg');
+  if (seg) {
+    var btns = seg.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      (function(btn) {
+        btn.addEventListener('click', function() { setGameModeBehavior(btn.getAttribute('data-game-behavior')); });
+      })(btns[i]);
+    }
+  }
+}
+function initGameMode() {
+  var gm = window.MineradioModules && window.MineradioModules.gameMode;
+  if (!gm) return;
+  gameModeController = gm.createController({
+    onIntent: gameModeOnIntent,
+    onStatus: renderGameModeStatus,
+  });
+  bindGameModeControls();
+  refreshGameModeUiFromSettings();
+  gameModeController.init();
+  refreshCs2InstallStatus();
+}
+
+// ============================================================
 //  启动
 // ============================================================
 applyDiyMode(diyPlayerMode, { save: false });
@@ -24203,6 +24387,7 @@ bindFxPanel();
 applySavedLyricPaletteState();
 bindQualityControl();
 bindVolumeControls();
+initGameMode();
 initControlGlassSurface();
 bindPlayerControlAnimations();
 scheduleUiWarmTask(function(){

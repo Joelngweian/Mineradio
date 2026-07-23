@@ -215,6 +215,12 @@ const API_ROUTE_PATHS = Object.freeze([
   '/api/debug/audio',
   '/api/debug/lyric',
   '/api/discover/home',
+  '/api/gsi/cs2',
+  '/api/gsi/install',
+  '/api/gsi/state',
+  '/api/gsi/status',
+  '/api/gsi/stream',
+  '/api/gsi/uninstall',
   '/api/login/cookie',
   '/api/login/status',
   '/api/logout',
@@ -232,6 +238,7 @@ const API_ROUTE_PATHS = Object.freeze([
   '/api/podcast/search',
   '/api/radio',
   '/api/search',
+  '/api/search/youtube',
   '/api/song/comments',
   '/api/song/like',
   '/api/song/like/check',
@@ -441,6 +448,75 @@ async function handleSearch(keywords, limit) {
     return rawList.slice(0, limit || 20).map(mapYTMItem).filter(Boolean);
   } catch (err) {
     console.error('[Search YTM Error]', err.message);
+    return [];
+  }
+}
+
+// 解析 "3:45" / "1:02:33" 时长文本为秒
+function parseDurationText(text) {
+  const parts = String(text || '').trim().split(':').map(n => parseInt(n, 10));
+  if (!parts.length || parts.some(isNaN)) return 0;
+  return parts.reduce((acc, n) => acc * 60 + n, 0);
+}
+
+// 把普通 YouTube 搜索的视频节点映射成与 YTM 一致的歌曲结构（同一套 videoId，走同一条音频管线）
+function mapYouTubeVideo(it) {
+  if (!it) return null;
+  const id = it.video_id || it.videoId || it.id || '';
+  if (!id || String(id).length !== 11) return null;      // 只要可直接播放的 11 位视频 id
+  if (it.is_live || it.is_upcoming) return null;         // 跳过直播 / 预告
+  const name = ytmText(it.title) || ytmText(it.name);
+  if (!name) return null;
+  const thumbs = (it.thumbnails && it.thumbnails.length) ? it.thumbnails : ytmThumbnails(it.thumbnail);
+  const cover = thumbs.length ? (thumbs[thumbs.length - 1].url || thumbs[0].url || '') : '';
+  const authors = ytmPeople(it.author || it.authors || it.byline);
+  const artistStr = authors.length ? authors.map(a => a.name).join(' / ') : (ytmText(it.author) || 'YouTube');
+  let durSec = 0;
+  if (it.duration && typeof it.duration === 'object') durSec = Number(it.duration.seconds) || parseDurationText(it.duration.text);
+  else if (typeof it.duration === 'number') durSec = it.duration;
+  else if (typeof it.duration === 'string') durSec = parseDurationText(it.duration);
+  if (!durSec && it.length_seconds) durSec = Number(it.length_seconds) || 0;
+  if (!durSec && it.duration_text) durSec = parseDurationText(it.duration_text);
+  if (durSec > 3600) return null;                        // 跳过超 1 小时（多为循环 / 合集 / 直播回放）
+  return {
+    provider: 'youtube', source: 'youtube', type: 'song',
+    id,
+    name,
+    artist: artistStr,
+    artists: authors,
+    artistId: authors[0] ? (authors[0].id || '') : '',
+    album: '',
+    cover,
+    duration: durSec * 1000,
+    fee: 0,
+    fromYouTube: true,
+  };
+}
+
+// ---------- 业务: 普通 YouTube 搜索（补 YTM 曲库没收录、但 YouTube 上有的歌）----------
+async function handleYouTubeSearch(keywords, limit) {
+  console.log('[Search YouTube]', keywords, 'limit:', limit);
+  if (!keywords) return [];
+  try {
+    const yt = await getYTMusic();
+    const search = await yt.search(keywords, { type: 'video' });
+    const raw = [];
+    const push = (arr) => { if (Array.isArray(arr)) for (const it of arr) raw.push(it); };
+    push(search && search.videos);
+    push(search && search.results);
+    if (!raw.length && search && Array.isArray(search.contents)) push(search.contents);
+    const out = [];
+    const seen = new Set();
+    for (const it of raw) {
+      const mapped = mapYouTubeVideo(it);
+      if (!mapped || seen.has(mapped.id)) continue;
+      seen.add(mapped.id);
+      out.push(mapped);
+      if (out.length >= (limit || 18)) break;
+    }
+    return out;
+  } catch (err) {
+    console.error('[Search YouTube Error]', err.message);
     return [];
   }
 }
@@ -1971,6 +2047,12 @@ async function fillRadioWithSearchFallback(songs, seen, seed, title, artist, lim
   return songs;
 }
 
+// CS2 游戏模式：GSI 接入服务（复用上方的 Steam 库定位函数）
+const gsiService = require('./server/gsi-service').createGsiService({
+  readSteamPathFromRegistry: readSteamPathFromRegistry,
+  parseSteamLibraryRoots: parseSteamLibraryRoots,
+});
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost:' + PORT);
   const pn = url.pathname;
@@ -2237,6 +2319,16 @@ const server = http.createServer(async (req, res) => {
       const songs = await handleSearch(kw, limit);
       sendJSON(res, { songs });
     } catch (err) { console.error('[Search]', err); sendJSON(res, { error: err.message, songs: [] }, 500); }
+    return;
+  }
+
+  if (pn === '/api/search/youtube') {
+    try {
+      const kw    = url.searchParams.get('keywords') || '';
+      const limit = parseInt(url.searchParams.get('limit') || '20');
+      const songs = await handleYouTubeSearch(kw, limit);
+      sendJSON(res, { songs });
+    } catch (err) { console.error('[Search YouTube]', err); sendJSON(res, { error: err.message, songs: [] }, 500); }
     return;
   }
 
@@ -2885,6 +2977,31 @@ const server = http.createServer(async (req, res) => {
       while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
       res.end();
     } catch (err) { console.error('[Audio]', err); res.writeHead(500); res.end(); }
+    return;
+  }
+
+  // ---------- CS2 游戏模式 (GSI) ----------
+  if (pn === '/api/gsi/cs2') {
+    if (req.method === 'POST') {
+      const body = await readRequestBody(req);
+      try { gsiService.handlePost(body); } catch (e) { console.warn('[GSI] parse failed:', e.message); }
+      sendJSON(res, { ok: true });
+    } else {
+      sendJSON(res, gsiService.getState());
+    }
+    return;
+  }
+  if (pn === '/api/gsi/state') { sendJSON(res, gsiService.getState()); return; }
+  if (pn === '/api/gsi/stream') { gsiService.attachStream(req, res); return; }
+  if (pn === '/api/gsi/status') { sendJSON(res, gsiService.installStatus(PORT)); return; }
+  if (pn === '/api/gsi/install') {
+    if (req.method !== 'POST') { sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405); return; }
+    sendJSON(res, gsiService.install(PORT));
+    return;
+  }
+  if (pn === '/api/gsi/uninstall') {
+    if (req.method !== 'POST') { sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405); return; }
+    sendJSON(res, gsiService.uninstall());
     return;
   }
 

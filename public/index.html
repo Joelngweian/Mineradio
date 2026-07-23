@@ -78,7 +78,7 @@
     </div>
     <div id="search-mode-tabs" class="search-mode-tabs" role="tablist" aria-label="Search mode">
       <button id="search-mode-song" class="active" type="button" onclick="setSearchMode('song')" aria-selected="true">All</button>
-      <button id="search-mode-youtube" type="button" onclick="setSearchMode('youtube')" aria-selected="false">NE</button>
+      <button id="search-mode-youtube" type="button" onclick="setSearchMode('youtube')" aria-selected="false">YouTube</button>
       <button id="search-mode-podcast" type="button" onclick="setSearchMode('podcast')" aria-selected="false">Podcast</button>
     </div>
     <div id="search-results"></div>
@@ -448,6 +448,37 @@
       <div class="fx-seg" id="cam-seg">
         <button data-cam="off" class="active">关闭</button>
         <button data-cam="gesture">手势触碰</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="fx-fold" id="fx-game-fold">
+    <div class="fx-fold-head" onclick="document.getElementById('fx-game-fold').classList.toggle('open')">
+      <span class="fx-fold-title"><strong>游戏模式</strong><small id="game-mode-status">未检测到游戏</small></span><span class="arrow">▶</span>
+    </div>
+    <div class="fx-fold-body">
+      <div class="gm-hint">打游戏交火时自动暂停音乐，阵亡 / 候场 / 菜单时自动恢复播放。仅在本地读取官方对局数据，不读取游戏内存，反作弊安全。</div>
+      <div class="fx-toggle-grid">
+        <div class="fx-toggle" id="t-gameMode" onclick="toggleGameMode()"><span>启用游戏模式</span><span class="dot"></span></div>
+      </div>
+      <div class="fx-section-label">支持的游戏</div>
+      <div class="fx-toggle-grid">
+        <div class="fx-toggle" id="t-gameModeCs2" onclick="toggleGameModeCs2()" title="通过 Valve 官方 Game State Integration 接入"><span>CS2</span><span class="dot"></span></div>
+        <div class="fx-toggle dev-locked" id="t-gameModeValorant" title="开发中，暂不可用"><span>Valorant<em class="fx-dev-badge">开发中</em></span><span class="dot"></span></div>
+      </div>
+      <div class="fx-section-label">交火时</div>
+      <div class="fx-seg" id="game-mode-behavior-seg">
+        <button data-game-behavior="pause" class="active">完全暂停</button>
+        <button data-game-behavior="duck">压低音量</button>
+      </div>
+      <div class="fx-slider" id="game-mode-duck-slider"><label>压低到</label><input id="fx-gameduck" type="range" min="0.05" max="0.8" step="0.05"><output></output></div>
+      <div class="fx-toggle-grid">
+        <div class="fx-toggle" id="t-gameModePlayDead" onclick="toggleGameModePlayDead()" title="阵亡观战时继续播放歌曲；关闭后死亡也保持安静"><span>观战播放歌曲</span><span class="dot"></span></div>
+      </div>
+      <div class="fx-section-label">CS2 集成</div>
+      <div class="gm-install-row">
+        <button class="fx-mini-btn" id="game-mode-install-btn" type="button" onclick="installCs2Integration()">安装 CS2 集成</button>
+        <small id="game-mode-install-status">检测中…</small>
       </div>
     </div>
   </div>
@@ -899,6 +930,7 @@
 <script src="js/modules/fx-archive-state.js"></script>
 <script src="js/modules/lyrics-state.js"></script>
 <script src="js/modules/beat-dynamics.js"></script>
+<script src="js/modules/game-mode.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

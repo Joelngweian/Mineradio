@@ -1139,6 +1139,9 @@ async function createWindow() {
   process.env.MINERADIO_UPDATE_DIR = getUpdateDownloadDir();
 
   localServer = require(path.join(__dirname, '..', 'server.js'));
+  // server.js 拆分后仅在被直接运行(require.main===module)时自启；作为嵌入进程 require 时
+  // 不会 listen，必须由宿主显式启动，否则 waitForServer 会永久挂起、窗口永远出不来。
+  if (typeof localServer.startServer === 'function' && !localServer.listening) localServer.startServer();
   await waitForServer(localServer);
 
   const initialBounds = getWindowedBounds();
