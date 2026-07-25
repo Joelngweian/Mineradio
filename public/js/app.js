@@ -15348,9 +15348,21 @@ function mergeSongSearchResults(youtubeSongs, limit, q) {
   return out.slice(0, limit);
 }
 async function fetchMusicSearchResults(q, mode) {
-  var endpoint = mode === 'youtube' ? '/api/search/youtube' : '/api/search';
-  var res = await apiJson(endpoint + '?keywords=' + encodeURIComponent(q) + '&limit=18');
-  return mergeSongSearchResults((res && res.songs) || [], 18, q);
+  if (mode === 'youtube') {
+    // YouTube 标签：纯 YouTube，多取一些（官方版排前、翻唱/其它版本靠后）
+    var yt = await apiJson('/api/search/youtube?keywords=' + encodeURIComponent(q) + '&limit=40');
+    return mergeSongSearchResults((yt && yt.songs) || [], 40, q);
+  }
+  // All 标签：YTM + YouTube 合并，覆盖 YTM 没收录、只在 YouTube 上的歌（如冷门翻唱）。
+  // 两路并行；按 videoId 去重时 YTM 先入保留（元数据更全），再按相关度统一排序——
+  // 普通搜歌 YTM 干净结果在前、YouTube 翻唱被降权；精确搜翻唱那条会自然浮上来。
+  var both = await Promise.all([
+    apiJson('/api/search?keywords=' + encodeURIComponent(q) + '&limit=18').catch(function(){ return null; }),
+    apiJson('/api/search/youtube?keywords=' + encodeURIComponent(q) + '&limit=18').catch(function(){ return null; })
+  ]);
+  var ytmSongs = (both[0] && both[0].songs) || [];
+  var ytSongs = (both[1] && both[1].songs) || [];
+  return mergeSongSearchResults(ytmSongs.concat(ytSongs), 24, q);
 }
 function renderSongSearchResults(songs) {
   playlist = songs || [];

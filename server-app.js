@@ -494,27 +494,39 @@ function mapYouTubeVideo(it) {
 }
 
 // ---------- 业务: 普通 YouTube 搜索（补 YTM 曲库没收录、但 YouTube 上有的歌）----------
+// 翻页拉更多结果：单页只有约 20 条、且官方版排前面，翻唱/live/其它版本容易被挤到后面，
+// 所以往后多翻几页凑够 target，让这些版本也能露出来。
 async function handleYouTubeSearch(keywords, limit) {
   console.log('[Search YouTube]', keywords, 'limit:', limit);
   if (!keywords) return [];
+  const target = Math.max(1, Math.min(Number(limit) || 40, 60));
+  const MAX_PAGES = 4;
   try {
     const yt = await getYTMusic();
-    const search = await yt.search(keywords, { type: 'video' });
-    const raw = [];
-    const push = (arr) => { if (Array.isArray(arr)) for (const it of arr) raw.push(it); };
-    push(search && search.videos);
-    push(search && search.results);
-    if (!raw.length && search && Array.isArray(search.contents)) push(search.contents);
+    let page = await yt.search(keywords, { type: 'video' });
     const out = [];
     const seen = new Set();
-    for (const it of raw) {
-      const mapped = mapYouTubeVideo(it);
-      if (!mapped || seen.has(mapped.id)) continue;
-      seen.add(mapped.id);
-      out.push(mapped);
-      if (out.length >= (limit || 18)) break;
+    const collect = (pg) => {
+      const raw = [];
+      const push = (arr) => { if (Array.isArray(arr)) for (const it of arr) raw.push(it); };
+      push(pg && pg.videos);
+      push(pg && pg.results);
+      if (!raw.length && pg && Array.isArray(pg.contents)) push(pg.contents);
+      for (const it of raw) {
+        const mapped = mapYouTubeVideo(it);
+        if (!mapped || seen.has(mapped.id)) continue;
+        seen.add(mapped.id);
+        out.push(mapped);
+      }
+    };
+    collect(page);
+    for (let p = 1; p < MAX_PAGES && out.length < target; p++) {
+      if (!page || !page.has_continuation || typeof page.getContinuation !== 'function') break;
+      try { page = await page.getContinuation(); } catch (e) { break; }
+      if (!page) break;
+      collect(page);
     }
-    return out;
+    return out.slice(0, target);
   } catch (err) {
     console.error('[Search YouTube Error]', err.message);
     return [];
