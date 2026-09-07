@@ -17,11 +17,16 @@ test('server keeps an explicit inventory for every raw API route branch', () => 
   const inventoryRoutes = uniqueSorted(Array.from(inventoryMatch[1].matchAll(/'([^']+)'/g)).map(match => match[1]));
 
   assert.deepEqual(inventoryRoutes, branchRoutes);
-  assert.equal(inventoryRoutes.length, 41);
+  assert.equal(inventoryRoutes.length, 42);
 });
 
 test('unknown api paths return json 404 before static fallback', () => {
   assert.match(serverSource, /pn\.startsWith\('\/api\/'\) && !API_ROUTE_SET\.has\(pn\)/);
   assert.match(serverSource, /API_ROUTE_NOT_FOUND/);
   assert.ok(serverSource.indexOf('API_ROUTE_NOT_FOUND') < serverSource.indexOf("pn === '/favicon.ico'"));
+});
+
+test('removed game mode api routes stay out of the HTTP app', () => {
+  assert.doesNotMatch(serverSource, /\/api\/gsi\//);
+  assert.doesNotMatch(serverSource, /gsiService|gsi-service|CS2 游戏模式/);
 });

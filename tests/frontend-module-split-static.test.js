@@ -21,6 +21,7 @@ const modules = [
   ['playlistDetailView', 'js/modules/playlist-detail-view.js'],
   ['hotkeyState', 'js/modules/hotkey-state.js'],
   ['fxArchiveState', 'js/modules/fx-archive-state.js'],
+  ['fullLyricsView', 'js/modules/full-lyrics-view.js'],
   ['lyricsState', 'js/modules/lyrics-state.js'],
   ['beatDynamics', 'js/modules/beat-dynamics.js']
 ];
@@ -323,6 +324,39 @@ test('lyrics module parses timed lyrics and fallback lines', () => {
   assert.equal(fallback[0].text, 'Song - Artist');
 });
 
+test('full lyrics view module renders a single lyrics column', () => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  new vm.Script(readModule('js/modules/full-lyrics-view.js'), { filename: 'full-lyrics-view.js' }).runInContext(sandbox);
+
+  const view = sandbox.window.MineradioModules.fullLyricsView;
+  const state = view.buildFullLyricsViewState({
+    lines: [
+      { t: 0, text: 'Intro' },
+      { t: 12, text: 'Current line' },
+      { t: 20, text: 'Next line' }
+    ],
+    currentTime: 13,
+    visible: true
+  });
+
+  assert.equal(state.activeIndex, 1);
+  assert.equal(state.lines.length, 3);
+  const html = view.renderFullLyricsHtml(state, {
+    escHtml: value => String(value)
+  });
+  assert.match(html, /full-lyric-line active/);
+  assert.match(html, /data-lyric-index="1"/);
+  assert.match(html, /Current line/);
+  assert.doesNotMatch(html, /接下来播放|评论|相关内容/);
+});
+
+test('removed game mode stays out of the active front-end bundle', () => {
+  assert.doesNotMatch(indexSource, /js\/modules\/game-mode\.js/);
+  assert.doesNotMatch(indexSource, /fx-game-fold|toggleGameMode|installCs2Integration/);
+  assert.doesNotMatch(appSource, /gameModeController|MineradioModules\.gameMode|\/api\/gsi\//);
+});
+
 test('hotkey state module normalizes shortcuts and duplicate bindings', () => {
   const sandbox = { window: {} };
   vm.createContext(sandbox);
@@ -576,6 +610,8 @@ test('main app delegates moved helpers through MineradioModules', () => {
   assert.match(appSource, /MineradioModules\.lyricsState\.parseYrcText\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.withLyricFallback\(/);
   assert.match(appSource, /MineradioModules\.lyricsState\.getLyricLineProgress\(/);
+  assert.match(appSource, /MineradioModules\.fullLyricsView\.buildFullLyricsViewState\(/);
+  assert.match(appSource, /MineradioModules\.fullLyricsView\.renderFullLyricsHtml\(/);
   assert.match(appSource, /MineradioModules\.beatDynamics\.cameraBeatEnvelope\(/);
   assert.match(appSource, /MineradioModules\.beatDynamics\.pulseEnvelope\(/);
 });

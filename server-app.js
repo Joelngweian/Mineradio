@@ -15,6 +15,7 @@ applyWindowsUtf8Console();
 const vm = require('vm');
 const { Innertube, Platform } = require('youtubei.js');
 const { Readable } = require('stream');
+const { JSDOM } = require('jsdom');
 
 // 注入 Node 环境下的 JavaScript Evaluator (解决 YouTube 签名解密 No valid URL to decipher 报错)
 Platform.shim.eval = async (data, env) => vm.runInNewContext(`(function() { ${data.output} })()`, env);
@@ -215,12 +216,6 @@ const API_ROUTE_PATHS = Object.freeze([
   '/api/debug/audio',
   '/api/debug/lyric',
   '/api/discover/home',
-  '/api/gsi/cs2',
-  '/api/gsi/install',
-  '/api/gsi/state',
-  '/api/gsi/status',
-  '/api/gsi/stream',
-  '/api/gsi/uninstall',
   '/api/login/cookie',
   '/api/login/status',
   '/api/logout',
@@ -1474,16 +1469,22 @@ function buildNeteaseTransMap(origLrc, transLrc) {
   return map;
 }
 
-// ---------- YTM 音频流解析（Metrolist 方式：直接手写 InnerTube player 请求） ----------
-// 背景：2024-2025 起 YouTube 对 ANDROID/IOS/WEB 客户端强制 PoToken，youtubei.js 默认客户端
-// 会返回 400 或无法解密的加密 URL。参照 Metrolist（活跃维护的 YT Music 客户端）的做法：
-//   1) 用 ANDROID_VR（Oculus Quest）客户端，loginSupported=false，请求时【不带任何 cookie/
-//      Authorization 头】，YouTube 对该客户端免 PoToken 且返回明文直链，无需签名解密；
-//   2) 客户端版本用 Metrolist 选定的旧版（1.43.32 非自适应码率、修复 YT Music 卡顿；1.61.48 兜底），
-//      不用 youtubei.js 硬编码的 1.65.10（新版易被封）；
-//   3) 年龄限制内容用 TVHTML5_SIMPLY_EMBEDDED_PLAYER 嵌入式客户端兜底。
+// ---------- YTM 音频流解析 ----------
+// 优先走 youtubei.js 的 WEB_CREATOR 客户端，由库内部处理 YouTube 的签名解密；
+// 同时为每首视频生成 WebPO Token，避免 YouTube 只放行冷启动前 1-2MB 后 403。
+// 旧 ANDROID_VR / TVHTML5 手写请求只作为最后兜底，避免 YouTube 策略变化时所有歌曲一起失效。
 const YTM_PLAYER_URL = 'https://music.youtube.com/youtubei/v1/player?prettyPrint=false';
+const YTM_WEB_URL = 'https://www.youtube.com';
+const YTM_WEBPO_REQUEST_KEY = 'O43z0dpjhgX20SCx4KAo';
 const YTM_PLAYER_CLIENTS = [
+  {
+    key: 'WEB_CREATOR_DECIPHER',
+    youtubeiClient: 'WEB_CREATOR',
+  },
+  {
+    key: 'WEB_DECIPHER',
+    youtubeiClient: 'WEB',
+  },
   {
     key: 'ANDROID_VR_1.43.32',
     clientName: 'ANDROID_VR', clientVersion: '1.43.32', clientId: '28',
@@ -1505,6 +1506,10 @@ const YTM_PLAYER_CLIENTS = [
 ];
 const ytmFormatCache = new Map();
 let ytmVisitorData = '';
+let ytmBgutilsPromise = null;
+let ytmWebPoMinterState = null;
+let ytmWebPoMinterPromise = null;
+const ytmPoTokenCache = new Map();
 
 async function getYtmVisitorData() {
   if (ytmVisitorData) return ytmVisitorData;
@@ -1523,12 +1528,249 @@ function ytmFormatCacheGet(sid) {
   return null;
 }
 
+function ytmPoTokenCacheGet(sid) {
+  const hit = ytmPoTokenCache.get(sid);
+  if (hit && Date.now() < hit.expiresAt) return hit.token;
+  if (hit) ytmPoTokenCache.delete(sid);
+  return '';
+}
+
+async function loadYtmBgutils() {
+  if (!ytmBgutilsPromise) {
+    ytmBgutilsPromise = Promise.all([
+      import('bgutils-js/botguard'),
+      import('bgutils-js/webpo'),
+      import('bgutils-js/utils'),
+    ]).then(([botguard, webpo, utils]) => ({
+      BotGuardClient: botguard.BotGuardClient,
+      WebPoMinter: webpo.WebPoMinter,
+      buildURL: utils.buildURL,
+      getHeaders: utils.getHeaders,
+      parseLooseJSON: utils.parseLooseJSON,
+      USER_AGENT: utils.USER_AGENT || UA,
+    }));
+  }
+  return ytmBgutilsPromise;
+}
+
+function patchYtmDomForBotGuard(dom) {
+  if (!dom || !dom.window) return;
+  try {
+    const canvasProto = dom.window.HTMLCanvasElement && dom.window.HTMLCanvasElement.prototype;
+    if (canvasProto && !canvasProto.__mineradioPatched) {
+      canvasProto.getContext = function() {
+        return {
+          fillRect() {}, clearRect() {}, getImageData() { return { data: new Uint8ClampedArray(4) }; },
+          putImageData() {}, createImageData() { return []; }, setTransform() {}, drawImage() {},
+          save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+          stroke() {}, translate() {}, scale() {}, rotate() {}, arc() {}, fill() {},
+          measureText() { return { width: 0 }; }, transform() {}, rect() {}, clip() {},
+          fillText() {}, strokeText() {},
+        };
+      };
+      canvasProto.toDataURL = function() { return 'data:image/png;base64,'; };
+      canvasProto.__mineradioPatched = true;
+    }
+  } catch (e) {}
+}
+
+function installYtmDomGlobals(dom, ytConfig) {
+  if (!dom || !dom.window) return;
+  patchYtmDomForBotGuard(dom);
+  if (ytConfig) {
+    try { dom.window.yt = { config_: JSON.parse(ytConfig) }; } catch (e) {}
+  }
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.location = dom.window.location;
+  globalThis.origin = dom.window.origin;
+  globalThis.yt = dom.window.yt || globalThis.yt || { config_: {} };
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: dom.window.navigator,
+      configurable: true,
+      writable: true,
+    });
+  } catch (e) {}
+}
+
+function normalizeYtmAttestationResponse(raw) {
+  if (!raw) return null;
+  const bg = raw.bgChallenge || raw.bg_challenge || raw;
+  const interpreterUrl = bg.interpreterUrl || bg.interpreter_url || {};
+  return {
+    bgChallenge: {
+      interpreterUrl: {
+        privateDoNotAccessOrElseTrustedResourceUrlWrappedValue:
+          interpreterUrl.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue ||
+          interpreterUrl.private_do_not_access_or_else_trusted_resource_url_wrapped_value ||
+          '',
+      },
+      program: bg.program || '',
+      globalName: bg.globalName || bg.global_name || '',
+    },
+  };
+}
+
+function getYtmAttestationUrl(challengeResponse) {
+  const wrapped = challengeResponse &&
+    challengeResponse.bgChallenge &&
+    challengeResponse.bgChallenge.interpreterUrl &&
+    challengeResponse.bgChallenge.interpreterUrl.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+  if (!wrapped) return '';
+  return wrapped.startsWith('//') ? 'https:' + wrapped : wrapped;
+}
+
+async function createYtmWebPoMinter() {
+  const { BotGuardClient, WebPoMinter, buildURL, getHeaders, parseLooseJSON, USER_AGENT } = await loadYtmBgutils();
+  const dom = new JSDOM('<!DOCTYPE html><html lang="en"><head><title></title></head><body></body></html>', {
+    url: YTM_WEB_URL,
+    referrer: YTM_WEB_URL + '/',
+    userAgent: USER_AGENT,
+  });
+  const pageResp = await fetch(YTM_WEB_URL, {
+    headers: {
+      accept: '*/*',
+      'accept-language': 'en-US,en;q=0.7',
+      'user-agent': USER_AGENT,
+      ...(userCookie ? { cookie: userCookie } : {}),
+    },
+  });
+  if (!pageResp.ok) throw new Error('WEBPO_PAGE_HTTP_' + pageResp.status);
+  const pageHtml = await pageResp.text();
+  const ytConfig = pageHtml.match(/ytcfg\.set\(({.+?})\);/s)?.[1] || '';
+  installYtmDomGlobals(dom, ytConfig);
+
+  const initialAttestationData = pageHtml.match(/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/);
+  let challengeResponse = null;
+  let requestKey = YTM_WEBPO_REQUEST_KEY;
+  if (initialAttestationData) {
+    const parsed = parseLooseJSON(initialAttestationData[1]);
+    challengeResponse = normalizeYtmAttestationResponse(parsed && parsed.R);
+    requestKey = parsed && (parsed.requestKey || parsed.request_key) || requestKey;
+  }
+  if (!challengeResponse || !challengeResponse.bgChallenge || !challengeResponse.bgChallenge.program) {
+    const yt = await getYTMusic(userCookie);
+    const fallbackChallenge = await yt.getAttestationChallenge('ENGAGEMENT_TYPE_UNBOUND');
+    challengeResponse = normalizeYtmAttestationResponse(fallbackChallenge);
+    requestKey = fallbackChallenge && (fallbackChallenge.request_key || fallbackChallenge.requestKey) || requestKey;
+  }
+  if (!challengeResponse || !challengeResponse.bgChallenge || !challengeResponse.bgChallenge.program) {
+    throw new Error('WEBPO_CHALLENGE_UNAVAILABLE');
+  }
+
+  const interpreterUrl = getYtmAttestationUrl(challengeResponse);
+  if (!interpreterUrl) throw new Error('WEBPO_INTERPRETER_URL_MISSING');
+  const scriptResp = await fetch(interpreterUrl, { headers: { 'user-agent': USER_AGENT } });
+  if (!scriptResp.ok) throw new Error('WEBPO_INTERPRETER_HTTP_' + scriptResp.status);
+  const interpreterJavascript = await scriptResp.text();
+  if (!interpreterJavascript) throw new Error('WEBPO_INTERPRETER_EMPTY');
+  new Function(interpreterJavascript)();
+
+  const botGuardClient = await BotGuardClient.create({
+    program: challengeResponse.bgChallenge.program,
+    globalName: challengeResponse.bgChallenge.globalName,
+    globalObject: globalThis,
+  });
+  const webPoSignalOutput = [];
+  const botguardResponse = await botGuardClient.snapshot({ webPoSignalOutput }, 10000);
+  if (!webPoSignalOutput[0]) throw new Error('WEBPO_SIGNAL_UNAVAILABLE');
+
+  const integrityResp = await fetch(buildURL('GenerateIT', true), {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify([requestKey, botguardResponse]),
+  });
+  if (!integrityResp.ok) throw new Error('WEBPO_INTEGRITY_HTTP_' + integrityResp.status);
+  const [integrityToken, estimatedTtlSecs, mintRefreshThreshold, websafeFallbackToken] = await integrityResp.json();
+  const minter = await WebPoMinter.create({
+    integrityToken,
+    estimatedTtlSecs,
+    mintRefreshThreshold,
+    websafeFallbackToken,
+  }, webPoSignalOutput);
+  const ttlMs = Math.max(5 * 60 * 1000, Math.min(Number(estimatedTtlSecs || 0) * 1000, 6 * 60 * 60 * 1000));
+  return { minter, expiresAt: Date.now() + ttlMs };
+}
+
+async function getYtmWebPoMinter(forceRefresh) {
+  if (!forceRefresh && ytmWebPoMinterState && Date.now() < ytmWebPoMinterState.expiresAt - 60 * 1000) {
+    return ytmWebPoMinterState.minter;
+  }
+  if (!ytmWebPoMinterPromise || forceRefresh) {
+    ytmWebPoMinterPromise = createYtmWebPoMinter()
+      .then((state) => {
+        ytmWebPoMinterState = state;
+        return state.minter;
+      })
+      .finally(() => {
+        ytmWebPoMinterPromise = null;
+      });
+  }
+  return ytmWebPoMinterPromise;
+}
+
+async function getYtmContentPoToken(sid, forceRefresh) {
+  if (!forceRefresh) {
+    const cached = ytmPoTokenCacheGet(sid);
+    if (cached) return cached;
+  }
+  try {
+    const minter = await getYtmWebPoMinter(forceRefresh);
+    const token = await minter.mintAsWebsafeString(String(sid || ''));
+    if (!token) throw new Error('WEBPO_TOKEN_EMPTY');
+    const expiresAt = Math.min(
+      ytmWebPoMinterState && ytmWebPoMinterState.expiresAt || (Date.now() + 30 * 60 * 1000),
+      Date.now() + 35 * 60 * 1000,
+    );
+    ytmPoTokenCache.set(sid, { token, expiresAt });
+    if (ytmPoTokenCache.size > 300) ytmPoTokenCache.delete(ytmPoTokenCache.keys().next().value);
+    return token;
+  } catch (e) {
+    if (!forceRefresh) return getYtmContentPoToken(sid, true);
+    throw e;
+  }
+}
+
+function appendYtmPoToken(url, poToken) {
+  if (!poToken) return url;
+  try {
+    const u = new URL(url);
+    u.searchParams.set('pot', poToken);
+    return u.toString();
+  } catch (e) {
+    return url + (url.includes('?') ? '&' : '?') + 'pot=' + encodeURIComponent(poToken);
+  }
+}
+
+function ytmFormatMime(fmt) {
+  return String((fmt && (fmt.mimeType || fmt.mime_type)) || 'audio/webm').split(';')[0].trim() || 'audio/webm';
+}
+
+function ytmFormatContentLength(fmt) {
+  return Number(fmt && (fmt.contentLength || fmt.content_length) || 0) || 0;
+}
+
+function normalizeYtmResolvedFormat(sid, clientKey, fmt, urlOverride) {
+  const directUrl = String(urlOverride || (fmt && fmt.url) || '').trim();
+  if (!directUrl || !/^https?:\/\//i.test(directUrl)) throw new Error('NO_DECIPHERED_AUDIO_URL');
+  return {
+    url: directUrl,
+    mime: ytmFormatMime(fmt),
+    contentLength: ytmFormatContentLength(fmt),
+    bitrate: Number(fmt && fmt.bitrate || 0) || 0,
+    itag: (fmt && fmt.itag) || 0,
+    client: clientKey,
+    sid,
+  };
+}
+
 // 从 streamingData 中挑最优纯音频格式：优先高码率、优先带 url 的（ANDROID_VR 返回明文 url）
 function pickBestAudioFormat(streamingData) {
   const all = []
     .concat(streamingData && streamingData.adaptiveFormats || [])
     .concat(streamingData && streamingData.formats || []);
-  const audio = all.filter(f => f && String(f.mimeType || '').toLowerCase().startsWith('audio/') && (f.url || f.signatureCipher || f.cipher));
+  const audio = all.filter(f => f && String(f.mimeType || f.mime_type || '').toLowerCase().startsWith('audio/') && (f.url || f.signatureCipher || f.signature_cipher || f.cipher));
   if (!audio.length) return null;
   // 只取带明文 url 的（免解密）；ANDROID_VR 全是明文 url
   const plain = audio.filter(f => f.url);
@@ -1543,7 +1785,24 @@ function pickBestAudioFormat(streamingData) {
   return pool[0];
 }
 
+async function fetchYtmYoutubeiFormat(sid, clientDef) {
+  if (!userCookie) throw new Error('LOGIN_REQUIRED_COOKIE_MISSING');
+  const poToken = await getYtmContentPoToken(sid);
+  const yt = await Innertube.create({ cookie: userCookie, po_token: poToken });
+  const fmt = await yt.getStreamingData(sid, {
+    client: clientDef.youtubeiClient,
+    type: 'audio',
+    quality: 'best',
+    po_token: poToken,
+  });
+  const resolved = normalizeYtmResolvedFormat(sid, clientDef.key, fmt);
+  resolved.url = appendYtmPoToken(resolved.url, poToken);
+  resolved.poToken = true;
+  return resolved;
+}
+
 async function fetchYtmPlayerFormat(sid, clientDef, visitorData) {
+  if (clientDef.youtubeiClient) return fetchYtmYoutubeiFormat(sid, clientDef);
   const clientCtx = Object.assign({
     clientName: clientDef.clientName,
     clientVersion: clientDef.clientVersion,
@@ -1572,7 +1831,6 @@ async function fetchYtmPlayerFormat(sid, clientDef, visitorData) {
     'X-Origin': 'https://music.youtube.com',
     'Referer': 'https://music.youtube.com/',
     'User-Agent': clientDef.userAgent,
-    // 关键：ANDROID_VR / 嵌入式客户端 loginSupported=false，绝不附加 cookie/Authorization，才能免 PoToken
   };
   if (visitorData) headers['X-Goog-Visitor-Id'] = visitorData;
   const json = await requestJson(YTM_PLAYER_URL, { method: 'POST', headers }, JSON.stringify(body));
@@ -1583,13 +1841,7 @@ async function fetchYtmPlayerFormat(sid, clientDef, visitorData) {
   }
   const fmt = pickBestAudioFormat(json && json.streamingData);
   if (!fmt || !fmt.url) throw new Error('NO_PLAIN_AUDIO_URL');
-  return {
-    url: fmt.url,
-    mime: String(fmt.mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm',
-    contentLength: Number(fmt.contentLength || 0) || 0,
-    bitrate: Number(fmt.bitrate || 0) || 0,
-    itag: fmt.itag || 0,
-  };
+  return normalizeYtmResolvedFormat(sid, clientDef.key, fmt);
 }
 
 async function resolveYtmAudioFormat(sid, forceRefresh) {
@@ -1610,6 +1862,7 @@ async function resolveYtmAudioFormat(sid, forceRefresh) {
         contentLength: fmt.contentLength,
         bitrate: fmt.bitrate,
         itag: fmt.itag,
+        poToken: !!fmt.poToken,
         expiresAt: Date.now() + 40 * 60 * 1000,
         failures: failures.slice(),
       };
@@ -2058,12 +2311,6 @@ async function fillRadioWithSearchFallback(songs, seen, seed, title, artist, lim
   }
   return songs;
 }
-
-// CS2 游戏模式：GSI 接入服务（复用上方的 Steam 库定位函数）
-const gsiService = require('./server/gsi-service').createGsiService({
-  readSteamPathFromRegistry: readSteamPathFromRegistry,
-  parseSteamLibraryRoots: parseSteamLibraryRoots,
-});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost:' + PORT);
@@ -2884,8 +3131,11 @@ const server = http.createServer(async (req, res) => {
         const fmt = await resolveYtmAudioFormat(sid, true);
         let upstream = null;
         try {
-          const probe = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-1023' } });
-          upstream = { status: probe.status, contentType: probe.headers.get('content-type') || '' };
+          const probeStart = fmt.contentLength && fmt.contentLength <= 2097152 ? 0 : 2097152;
+          const probeEnd = fmt.contentLength ? Math.min(probeStart + 1023, fmt.contentLength - 1) : (probeStart + 1023);
+          const probeRange = 'bytes=' + probeStart + '-' + probeEnd;
+          const probe = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: probeRange } });
+          upstream = { status: probe.status, contentType: probe.headers.get('content-type') || '', range: probeRange };
           try { if (probe.body && probe.body.cancel) await probe.body.cancel(); } catch (e) {}
         } catch (e) {
           upstream = { error: (e && e.message) || String(e) };
@@ -2897,6 +3147,7 @@ const server = http.createServer(async (req, res) => {
           mime: fmt.mime,
           bitrate: fmt.bitrate,
           contentLength: fmt.contentLength,
+          poToken: !!fmt.poToken,
           clientFailures: fmt.failures,
           upstream,
           loggedIn: !!userCookie,
@@ -2949,10 +3200,11 @@ const server = http.createServer(async (req, res) => {
             fmt = null; // 落到 download() 兜底
           }
         }
-        // 第二层兜底：youtubei.js 内部下载流（不支持 seek），默认 ANDROID_VR 客户端
+        // 第二层兜底：youtubei.js 内部下载流（不支持 seek），继续使用 WEB_CREATOR + WebPO。
         try {
-          const yt = await getYTMusic();
-          const stream = await yt.download(sid, { client: 'ANDROID_VR', type: 'audio', quality: 'best' });
+          const poToken = await getYtmContentPoToken(sid, true).catch(() => '');
+          const yt = poToken ? await Innertube.create({ cookie: userCookie || undefined, po_token: poToken }) : await getYTMusic();
+          const stream = await yt.download(sid, { client: 'WEB_CREATOR', type: 'audio', quality: 'best', po_token: poToken || undefined });
           const nodeStream = Readable.fromWeb(stream);
           res.writeHead(200, {
             'Content-Type': (fmt && fmt.mime) || 'audio/webm',
@@ -2989,31 +3241,6 @@ const server = http.createServer(async (req, res) => {
       while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
       res.end();
     } catch (err) { console.error('[Audio]', err); res.writeHead(500); res.end(); }
-    return;
-  }
-
-  // ---------- CS2 游戏模式 (GSI) ----------
-  if (pn === '/api/gsi/cs2') {
-    if (req.method === 'POST') {
-      const body = await readRequestBody(req);
-      try { gsiService.handlePost(body); } catch (e) { console.warn('[GSI] parse failed:', e.message); }
-      sendJSON(res, { ok: true });
-    } else {
-      sendJSON(res, gsiService.getState());
-    }
-    return;
-  }
-  if (pn === '/api/gsi/state') { sendJSON(res, gsiService.getState()); return; }
-  if (pn === '/api/gsi/stream') { gsiService.attachStream(req, res); return; }
-  if (pn === '/api/gsi/status') { sendJSON(res, gsiService.installStatus(PORT)); return; }
-  if (pn === '/api/gsi/install') {
-    if (req.method !== 'POST') { sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405); return; }
-    sendJSON(res, gsiService.install(PORT));
-    return;
-  }
-  if (pn === '/api/gsi/uninstall') {
-    if (req.method !== 'POST') { sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405); return; }
-    sendJSON(res, gsiService.uninstall());
     return;
   }
 

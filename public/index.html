@@ -452,37 +452,6 @@
     </div>
   </div>
 
-  <div class="fx-fold" id="fx-game-fold">
-    <div class="fx-fold-head" onclick="document.getElementById('fx-game-fold').classList.toggle('open')">
-      <span class="fx-fold-title"><strong>游戏模式</strong><small id="game-mode-status">未检测到游戏</small></span><span class="arrow">▶</span>
-    </div>
-    <div class="fx-fold-body">
-      <div class="gm-hint">打游戏交火时自动暂停音乐，阵亡 / 候场 / 菜单时自动恢复播放。仅在本地读取官方对局数据，不读取游戏内存，反作弊安全。</div>
-      <div class="fx-toggle-grid">
-        <div class="fx-toggle" id="t-gameMode" onclick="toggleGameMode()"><span>启用游戏模式</span><span class="dot"></span></div>
-      </div>
-      <div class="fx-section-label">支持的游戏</div>
-      <div class="fx-toggle-grid">
-        <div class="fx-toggle" id="t-gameModeCs2" onclick="toggleGameModeCs2()" title="通过 Valve 官方 Game State Integration 接入"><span>CS2</span><span class="dot"></span></div>
-        <div class="fx-toggle dev-locked" id="t-gameModeValorant" title="开发中，暂不可用"><span>Valorant<em class="fx-dev-badge">开发中</em></span><span class="dot"></span></div>
-      </div>
-      <div class="fx-section-label">交火时</div>
-      <div class="fx-seg" id="game-mode-behavior-seg">
-        <button data-game-behavior="pause" class="active">完全暂停</button>
-        <button data-game-behavior="duck">压低音量</button>
-      </div>
-      <div class="fx-slider" id="game-mode-duck-slider"><label>压低到</label><input id="fx-gameduck" type="range" min="0.05" max="0.8" step="0.05"><output></output></div>
-      <div class="fx-toggle-grid">
-        <div class="fx-toggle" id="t-gameModePlayDead" onclick="toggleGameModePlayDead()" title="阵亡观战时继续播放歌曲；关闭后死亡也保持安静"><span>观战播放歌曲</span><span class="dot"></span></div>
-      </div>
-      <div class="fx-section-label">CS2 集成</div>
-      <div class="gm-install-row">
-        <button class="fx-mini-btn" id="game-mode-install-btn" type="button" onclick="installCs2Integration()">安装 CS2 集成</button>
-        <small id="game-mode-install-status">检测中…</small>
-      </div>
-    </div>
-  </div>
-
   <div class="fx-advanced" id="fx-advanced">
     <div class="fx-advanced-head" onclick="document.getElementById('fx-advanced').classList.toggle('open')">
       <span>高级参数</span><span class="arrow">▶</span>
@@ -575,6 +544,19 @@
 
 <!-- 舞台歌词 (大字 3D, 由 JS 动态填充) -->
 <div id="stage-lyrics"></div>
+
+<!-- 全文歌词阅读层 -->
+<div id="full-lyrics-panel" aria-hidden="true">
+  <div class="full-lyrics-head">
+    <div class="full-lyrics-meta">
+      <div class="full-lyrics-kicker">LYRICS</div>
+      <div id="full-lyrics-title" class="full-lyrics-title">歌词</div>
+      <div id="full-lyrics-artist" class="full-lyrics-artist"></div>
+    </div>
+    <button class="full-lyrics-close" type="button" onclick="toggleFullLyrics(false)" title="关闭歌词">×</button>
+  </div>
+  <div id="full-lyrics-list" class="full-lyrics-list"></div>
+</div>
 
 <!-- 手势 HUD + 手骨架 -->
 <div id="gesture-hud" class="gesture-hud">
@@ -928,9 +910,9 @@
 <script src="js/modules/playlist-detail-view.js"></script>
 <script src="js/modules/hotkey-state.js"></script>
 <script src="js/modules/fx-archive-state.js"></script>
+<script src="js/modules/full-lyrics-view.js"></script>
 <script src="js/modules/lyrics-state.js"></script>
 <script src="js/modules/beat-dynamics.js"></script>
-<script src="js/modules/game-mode.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

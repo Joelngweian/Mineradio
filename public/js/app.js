@@ -20,6 +20,7 @@ var beatOnsetFlag = false;        // beat 上升沿瞬时标志,每帧消费一�
 var lastStrongDrop = 0;           // 用于 burst 预设的强 drop 时刻
 
 var lyricsLines = [], lyricsVisible = false, lyricsHasNativeKaraoke = false, lyricsTimingSource = 'none';
+var fullLyricsVisible = false, fullLyricsActiveIndex = -1, fullLyricsUserScrollUntil = 0, fullLyricsProgrammaticScroll = false;
 var playlist = [], playQueue = [], currentIdx = -1, playing = false, playToggleBusy = false;
 var searchMode = 'song', podcastResults = [], podcastPrograms = [], podcastCurrentRadio = null;
 var loginStatus = { loggedIn: false, vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
@@ -16441,7 +16442,6 @@ async function togglePlay() {
   playToggleBusy = true;
   try {
     forcePlaybackControlsInteractive();
-    if (gameModeController) gameModeController.noteManualToggle();
     if ((!audio || !audio.src) && playQueue.length && currentIdx >= 0) {
       await playQueueAt(currentIdx, { manual: true });
       return;
@@ -16953,23 +16953,125 @@ function parseYrcText(text) {
 }
 
 function renderLyrics() {
-  // v8: 歌词渲染由 stageLyrics 在每帧 tickLyricsParticles 里推动
+  renderFullLyricsPanel(false);
+  // v8: 舞台歌词渲染由 stageLyrics 在每帧 tickLyricsParticles 里推动
   clearStageLyrics();
 }
-function toggleLyricsPanel(force) {
-  if (force === false) fx.particleLyrics = false;
-  else if (force === true) fx.particleLyrics = true;
-  else fx.particleLyrics = !fx.particleLyrics;
-  if (fx.particleLyrics) {
-    createLyricsParticles();
-    showToast('歌词已开启');
-  } else {
-    clearStageLyrics();
-    showToast('歌词已关闭');
-  }
-  lyricsVisible = fx.particleLyrics;
+
+function fullLyricsCurrentTime() {
+  return audio && isFinite(audio.currentTime) ? Number(audio.currentTime) : 0;
 }
-function updateLyricsHighlight() { /* v8: 由 tickLyricsParticles 接管 */ }
+
+function fullLyricsCurrentMeta() {
+  var song = currentLyricSong();
+  song = song || {};
+  return {
+    title: song.name || song.title || '歌词',
+    artist: song.artist || song.ar || song.author || ''
+  };
+}
+
+function buildFullLyricsPanelState() {
+  var meta = fullLyricsCurrentMeta();
+  return MineradioModules.fullLyricsView.buildFullLyricsViewState({
+    lines: lyricsLines,
+    currentTime: fullLyricsCurrentTime(),
+    visible: fullLyricsVisible,
+    title: meta.title,
+    artist: meta.artist,
+    timingSource: lyricsTimingSource
+  });
+}
+
+function bindFullLyricsListEvents(list) {
+  if (!list || list._mineradioFullLyricsBound) return;
+  list._mineradioFullLyricsBound = true;
+  list.addEventListener('scroll', function() {
+    if (fullLyricsProgrammaticScroll) return;
+    fullLyricsUserScrollUntil = Date.now() + 4500;
+  }, { passive: true });
+  list.addEventListener('click', function(e) {
+    var row = e.target && e.target.closest ? e.target.closest('.full-lyric-line') : null;
+    if (!row || !list.contains(row)) return;
+    seekFullLyricLine(parseInt(row.getAttribute('data-lyric-index') || '-1', 10));
+  });
+}
+
+function updateFullLyricsButton() {
+  var btn = document.querySelector('.lyrics-toggle-btn');
+  if (!btn) return;
+  btn.classList.toggle('active', !!fullLyricsVisible);
+  btn.setAttribute('aria-pressed', fullLyricsVisible ? 'true' : 'false');
+  btn.title = fullLyricsVisible ? '关闭全文歌词' : '全文歌词';
+}
+
+function renderFullLyricsPanel(forceScroll) {
+  var panel = document.getElementById('full-lyrics-panel');
+  var list = document.getElementById('full-lyrics-list');
+  if (!panel || !list || !MineradioModules.fullLyricsView) return;
+  bindFullLyricsListEvents(list);
+  var state = buildFullLyricsPanelState();
+  var title = document.getElementById('full-lyrics-title');
+  var artist = document.getElementById('full-lyrics-artist');
+  if (title) title.textContent = state.title || '歌词';
+  if (artist) artist.textContent = state.artist || '';
+  panel.classList.toggle('show', !!fullLyricsVisible);
+  panel.setAttribute('aria-hidden', fullLyricsVisible ? 'false' : 'true');
+  list.innerHTML = MineradioModules.fullLyricsView.renderFullLyricsHtml(state, { escHtml: escHtml });
+  fullLyricsActiveIndex = -9999;
+  syncFullLyricsActiveLine(forceScroll);
+  updateFullLyricsButton();
+}
+
+function syncFullLyricsActiveLine(forceScroll) {
+  if (!fullLyricsVisible || !MineradioModules.fullLyricsView) return;
+  var list = document.getElementById('full-lyrics-list');
+  if (!list) return;
+  var state = buildFullLyricsPanelState();
+  if (state.activeIndex === fullLyricsActiveIndex && !forceScroll) return;
+  fullLyricsActiveIndex = state.activeIndex;
+  var rows = list.querySelectorAll('.full-lyric-line');
+  var activeRow = null;
+  rows.forEach(function(row) {
+    var index = parseInt(row.getAttribute('data-lyric-index') || '-1', 10);
+    var active = index === state.activeIndex;
+    row.classList.toggle('active', active);
+    row.classList.toggle('passed', state.activeIndex >= 0 && index < state.activeIndex);
+    if (active) activeRow = row;
+  });
+  if (activeRow && (forceScroll || Date.now() > fullLyricsUserScrollUntil)) {
+    fullLyricsProgrammaticScroll = true;
+    activeRow.scrollIntoView({ block: 'center', behavior: forceScroll ? 'auto' : 'smooth' });
+    setTimeout(function(){ fullLyricsProgrammaticScroll = false; }, forceScroll ? 180 : 900);
+  }
+}
+
+function seekFullLyricLine(index) {
+  if (!audio || !Array.isArray(lyricsLines) || index < 0 || !lyricsLines[index]) return;
+  var t = Number(lyricsLines[index].t);
+  if (!isFinite(t)) return;
+  audio.currentTime = Math.max(0, t);
+  fullLyricsUserScrollUntil = 0;
+  syncFullLyricsActiveLine(true);
+}
+
+function toggleFullLyrics(force) {
+  if (force === false) fullLyricsVisible = false;
+  else if (force === true) fullLyricsVisible = true;
+  else fullLyricsVisible = !fullLyricsVisible;
+  lyricsVisible = fullLyricsVisible;
+  renderFullLyricsPanel(true);
+  showToast(fullLyricsVisible ? '全文歌词已打开' : '全文歌词已关闭');
+}
+
+function toggleLyricsPanel(force) {
+  toggleFullLyrics(force);
+}
+function updateLyricsHighlight() {
+  if (fullLyricsVisible) {
+    syncFullLyricsActiveLine(false);
+  }
+}
 
 // ============================================================
 //  播放列表面板
@@ -17709,6 +17811,9 @@ function bindPlaybackProgressEvents(audioEl) {
   audioEl._mineradioProgressBound = true;
   ['loadedmetadata', 'durationchange', 'timeupdate', 'seeked', 'play', 'pause', 'emptied'].forEach(function(name){
     audioEl.addEventListener(name, updatePlaybackProgressUi);
+  });
+  ['loadedmetadata', 'timeupdate', 'seeked', 'play', 'pause', 'emptied'].forEach(function(name){
+    audioEl.addEventListener(name, updateLyricsHighlight);
   });
   ['play', 'playing', 'pause', 'ended', 'emptied', 'abort', 'error'].forEach(function(name){
     audioEl.addEventListener(name, function(){ syncPlaybackStateFromAudioEvent(name); });
@@ -20582,7 +20687,6 @@ function setParticleLyricsSilently(on) {
   fx.particleLyrics = !!on;
   if (fx.particleLyrics) createLyricsParticles();
   else clearStageLyrics();
-  lyricsVisible = fx.particleLyrics;
 }
 
 function updateImmersiveButton() {
@@ -24210,188 +24314,6 @@ function toggleFullscreen() {
 })();
 
 // ============================================================
-//  游戏模式（CS2）— 交火时自动暂停 / 压低音乐，阵亡·候场·菜单时恢复
-// ============================================================
-var gameModeController = null;
-var gameModePausedByUs = false;   // 当前暂停是否由游戏模式发起
-var gameModeDucked = false;
-var gameModeDuckHoldTimer = 0;
-
-function gameModeUserVolume() {
-  return (typeof targetVolume === 'number' && targetVolume >= 0) ? targetVolume : 0.8;
-}
-function gameModeClearDuckHold() {
-  if (gameModeDuckHoldTimer) { clearInterval(gameModeDuckHoldTimer); gameModeDuckHoldTimer = 0; }
-  gameModeDucked = false;
-}
-function gameModeEnterPause() {
-  gameModeClearDuckHold();
-  if (audio && audio.src && !audio.paused && playing) {
-    gameModePausedByUs = true;
-    fadeOutAndPauseAudio().then(function() {
-      playing = false;
-      setPlayIcon(false);
-      hideLoading();
-      try { syncPlaybackStateFromAudioEvent('game-mode-pause'); } catch (e) {}
-    });
-  }
-}
-function gameModeEnterDuck(frac) {
-  gameModePausedByUs = false;
-  frac = clampRange(Number(frac) || 0.25, 0.05, 1);
-  gameModeDucked = true;
-  rampAudioOutputGain(gameModeUserVolume() * frac, 500);
-  if (gameModeDuckHoldTimer) clearInterval(gameModeDuckHoldTimer);
-  // 曲目切换 / 淡入等会把输出增益复位，这里周期性重申压低值
-  gameModeDuckHoldTimer = setInterval(function() {
-    if (!gameModeDucked || !audio || audio.paused) return;
-    rampAudioOutputGain(gameModeUserVolume() * frac, 300);
-  }, 1500);
-}
-function gameModeRelease() {
-  if (gameModeDucked) {
-    gameModeClearDuckHold();
-    rampAudioOutputGain(gameModeUserVolume(), 500);
-  }
-  if (gameModePausedByUs) {
-    gameModePausedByUs = false;
-    if (audio && audio.src && audio.paused) attemptAudioPlay({ manual: false, silent: true });
-  }
-}
-function gameModeOnIntent(intent) {
-  if (!intent) return;
-  if (intent.suppress) {
-    if (intent.behavior === 'duck') gameModeEnterDuck(intent.duckVolume);
-    else gameModeEnterPause();
-  } else {
-    gameModeRelease();
-  }
-}
-function renderGameModeStatus(status) {
-  if (!status) return;
-  var el = document.getElementById('game-mode-status');
-  if (el) el.textContent = status.label || '未检测到游戏';
-  var fold = document.getElementById('fx-game-fold');
-  if (fold) fold.classList.toggle('gm-live', !!(status.derived && status.derived.engaged));
-}
-function refreshGameModeUiFromSettings() {
-  if (!ensureGameModeController()) return;
-  var s = gameModeController.getSettings();
-  var setOn = function(id, on) { var el = document.getElementById(id); if (el) el.classList.toggle('on', !!on); };
-  setOn('t-gameMode', s.enabled);
-  setOn('t-gameModeCs2', s.cs2);
-  setOn('t-gameModePlayDead', s.playWhenDead);
-  var seg = document.getElementById('game-mode-behavior-seg');
-  if (seg) {
-    var btns = seg.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) {
-      btns[i].classList.toggle('active', btns[i].getAttribute('data-game-behavior') === s.behavior);
-    }
-  }
-  var fold = document.getElementById('fx-game-fold');
-  if (fold) fold.classList.toggle('gm-duck', s.behavior === 'duck');
-  var slider = document.getElementById('fx-gameduck');
-  if (slider) {
-    slider.value = s.duckVolume;
-    var out = slider.parentElement && slider.parentElement.querySelector('output');
-    if (out) out.textContent = Math.round(s.duckVolume * 100) + '%';
-  }
-}
-function ensureGameModeController() {
-  // 兜底：若启动时初始化被跳过/失败，首次点击时补一次，避免开关点了没反应
-  if (!gameModeController) { try { initGameMode(); } catch (e) { console.warn('[GameMode] init failed', e); } }
-  return gameModeController;
-}
-function toggleGameMode() {
-  if (!ensureGameModeController()) return;
-  var was = gameModeController.getSettings().enabled;
-  gameModeController.update({ enabled: !was });
-  refreshGameModeUiFromSettings();
-  showToast(!was ? '游戏模式已开启' : '游戏模式已关闭');
-  if (!was) refreshCs2InstallStatus();
-}
-function toggleGameModeCs2() {
-  if (!ensureGameModeController()) return;
-  var was = gameModeController.getSettings().cs2;
-  gameModeController.update({ cs2: !was });
-  refreshGameModeUiFromSettings();
-}
-function toggleGameModePlayDead() {
-  if (!ensureGameModeController()) return;
-  var was = gameModeController.getSettings().playWhenDead;
-  gameModeController.update({ playWhenDead: !was });
-  refreshGameModeUiFromSettings();
-  showToast(!was ? '观战时播放歌曲' : '观战时静音');
-}
-function setGameModeBehavior(behavior) {
-  if (!ensureGameModeController()) return;
-  gameModeController.update({ behavior: behavior === 'duck' ? 'duck' : 'pause' });
-  refreshGameModeUiFromSettings();
-}
-async function refreshCs2InstallStatus() {
-  var el = document.getElementById('game-mode-install-status');
-  var btn = document.getElementById('game-mode-install-btn');
-  try {
-    var r = await fetch('/api/gsi/status').then(function(x) { return x.json(); });
-    if (el) {
-      if (r && r.installed) el.textContent = r.portMatches ? '已安装 ✓' : '端口已变，请重新安装';
-      else if (r && r.found) el.textContent = '未安装';
-      else el.textContent = '未找到 CS2';
-    }
-    if (btn) btn.textContent = (r && r.installed) ? '重新安装 / 检测' : '安装 CS2 集成';
-  } catch (e) {
-    if (el) el.textContent = '检测失败';
-  }
-}
-async function installCs2Integration() {
-  var btn = document.getElementById('game-mode-install-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '安装中…'; }
-  try {
-    var r = await fetch('/api/gsi/install', { method: 'POST' }).then(function(x) { return x.json(); });
-    if (r && r.ok) showToast('CS2 集成已安装，重启 CS2 后生效');
-    else if (r && r.error === 'CS2_NOT_FOUND') showToast('未找到 CS2 目录，请手动放置配置文件');
-    else showToast('安装失败：' + (r && (r.message || r.error) || '未知错误'));
-  } catch (e) {
-    showToast('安装失败：' + e.message);
-  }
-  if (btn) btn.disabled = false;
-  refreshCs2InstallStatus();
-}
-function bindGameModeControls() {
-  var slider = document.getElementById('fx-gameduck');
-  if (slider) {
-    slider.addEventListener('input', function() {
-      if (!ensureGameModeController()) return;
-      var v = clampRange(parseFloat(slider.value), 0.05, 1);
-      gameModeController.update({ duckVolume: v });
-      var out = slider.parentElement && slider.parentElement.querySelector('output');
-      if (out) out.textContent = Math.round(v * 100) + '%';
-    });
-  }
-  var seg = document.getElementById('game-mode-behavior-seg');
-  if (seg) {
-    var btns = seg.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) {
-      (function(btn) {
-        btn.addEventListener('click', function() { setGameModeBehavior(btn.getAttribute('data-game-behavior')); });
-      })(btns[i]);
-    }
-  }
-}
-function initGameMode() {
-  var gm = window.MineradioModules && window.MineradioModules.gameMode;
-  if (!gm) return;
-  gameModeController = gm.createController({
-    onIntent: gameModeOnIntent,
-    onStatus: renderGameModeStatus,
-  });
-  bindGameModeControls();
-  refreshGameModeUiFromSettings();
-  gameModeController.init();
-  refreshCs2InstallStatus();
-}
-
-// ============================================================
 //  启动
 // ============================================================
 applyDiyMode(diyPlayerMode, { save: false });
@@ -24399,7 +24321,6 @@ bindFxPanel();
 applySavedLyricPaletteState();
 bindQualityControl();
 bindVolumeControls();
-initGameMode();
 initControlGlassSurface();
 bindPlayerControlAnimations();
 scheduleUiWarmTask(function(){
