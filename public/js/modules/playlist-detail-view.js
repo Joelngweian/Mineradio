@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function fallbackEscHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -59,7 +54,6 @@
     '</div>';
   }
 
-  global.MineradioModules.playlistDetailView = {
-    renderPlaylistDetailHtml: renderPlaylistDetailHtml
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  renderPlaylistDetailHtml,
+};

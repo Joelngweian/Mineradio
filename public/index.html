@@ -873,6 +873,11 @@
 </div>
 
 <div id="toast"></div>
+<div id="failure-diagnostic-notice" role="status" aria-live="polite" aria-hidden="true">
+  <span id="failure-diagnostic-text">播放失败，已记录诊断</span>
+  <button id="failure-diagnostic-export-btn" type="button">导出诊断</button>
+  <button id="failure-diagnostic-close-btn" type="button" aria-label="关闭">×</button>
+</div>
 <div id="source-fallback-notice" aria-live="polite">
   <div class="source-fallback-head">
     <div id="source-fallback-title" class="source-fallback-title">自动换源</div>
@@ -899,20 +904,6 @@
 
 </div>
 
-<script src="js/modules/api-client.js"></script>
-<script src="js/modules/app-version.js"></script>
-<script src="js/modules/wallpaper-state.js"></script>
-<script src="js/modules/queue-state.js"></script>
-<script src="js/modules/queue-controller.js"></script>
-<script src="js/modules/update-panel.js"></script>
-<script src="js/modules/home-recommendations.js"></script>
-<script src="js/modules/home-discover-view.js"></script>
-<script src="js/modules/playlist-detail-view.js"></script>
-<script src="js/modules/hotkey-state.js"></script>
-<script src="js/modules/fx-archive-state.js"></script>
-<script src="js/modules/full-lyrics-view.js"></script>
-<script src="js/modules/lyrics-state.js"></script>
-<script src="js/modules/beat-dynamics.js"></script>
-<script src="js/app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

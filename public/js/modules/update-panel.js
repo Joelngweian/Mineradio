@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function formatUpdateBytes(bytes) {
     bytes = Number(bytes) || 0;
     if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2).replace(/\.00$/, '') + ' GB';
@@ -100,11 +95,10 @@
     };
   }
 
-  global.MineradioModules.updatePanel = {
-    formatUpdateBytes: formatUpdateBytes,
-    formatUpdateSpeed: formatUpdateSpeed,
-    progressDetailText: progressDetailText,
-    renderUpdateNotesHtml: renderUpdateNotesHtml,
-    previewView: previewView
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  formatUpdateBytes,
+  formatUpdateSpeed,
+  progressDetailText,
+  renderUpdateNotesHtml,
+  previewView,
+};

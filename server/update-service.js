@@ -15,6 +15,7 @@ const APP_PACKAGE = readPackageInfo();
 const APP_VERSION = process.env.MINERADIO_VERSION || APP_PACKAGE.version || '0.9.11';
 const UPDATE_CONFIG = readUpdateConfig(APP_PACKAGE);
 const PATCH_MAX_BYTES = 12 * 1024 * 1024;
+const PATCH_MAX_FILES = 120;
 const UPDATE_PROBE_BYTES = 512 * 1024;
 const UPDATE_PROBE_TIMEOUT_MS = 5000;
 const MIN_UPDATE_DOWNLOAD_SWITCH_BPS = 768 * 1024;
@@ -450,46 +451,48 @@ function classifyUpdateError(err) {
   return { code: code || 'UPDATE_FAILED', reason: '更新失败：' + detail, detail };
 }
 async function fetchWithTimeout(url, opts, timeoutMs) {
+  const requestOptions = Object.assign({}, opts || {});
+  const parentSignal = requestOptions.signal;
   const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal && parentSignal.reason);
+  if (parentSignal) {
+    if (parentSignal.aborted) abortFromParent();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
   const timer = setTimeout(() => controller.abort(), timeoutMs || 12000);
   try {
-    return await fetch(url, Object.assign({}, opts || {}, { signal: controller.signal }));
+    return await fetch(url, Object.assign(requestOptions, { signal: controller.signal }));
   } finally {
     clearTimeout(timer);
+    if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
   }
 }
-async function probeUpdateCandidateSpeed(candidate) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPDATE_PROBE_TIMEOUT_MS);
+async function probeUpdateCandidateSpeed(candidate, signal) {
   const startedAt = Date.now();
   let received = 0;
+  const resp = await fetchWithTimeout(candidate.url, {
+    headers: {
+      'User-Agent': `Mineradio/${APP_VERSION}`,
+      'Range': 'bytes=0-' + (UPDATE_PROBE_BYTES - 1),
+    },
+    signal,
+  }, UPDATE_PROBE_TIMEOUT_MS);
+  if (!resp.ok) throw updateError('HTTP_' + resp.status, 'HTTP ' + resp.status);
+  if (!resp.body || !resp.body.getReader) return 0;
+  const reader = resp.body.getReader();
   try {
-    const resp = await fetch(candidate.url, {
-      headers: {
-        'User-Agent': `Mineradio/${APP_VERSION}`,
-        'Range': 'bytes=0-' + (UPDATE_PROBE_BYTES - 1),
-      },
-      signal: controller.signal,
-    });
-    if (!resp.ok) throw updateError('HTTP_' + resp.status, 'HTTP ' + resp.status);
-    if (!resp.body || !resp.body.getReader) return 0;
-    const reader = resp.body.getReader();
-    try {
-      while (received < UPDATE_PROBE_BYTES) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        received += Buffer.from(chunk.value).length;
-      }
-    } finally {
-      try { await reader.cancel(); } catch (_) {}
+    while (received < UPDATE_PROBE_BYTES) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      received += Buffer.from(chunk.value).length;
     }
-    const seconds = Math.max(0.1, (Date.now() - startedAt) / 1000);
-    return received > 0 ? Math.round(received / seconds) : 0;
   } finally {
-    clearTimeout(timer);
+    try { await reader.cancel(); } catch (_) {}
   }
+  const seconds = Math.max(0.1, (Date.now() - startedAt) / 1000);
+  return received > 0 ? Math.round(received / seconds) : 0;
 }
-async function prioritizeUpdateDownloadCandidates(job, candidates) {
+async function prioritizeUpdateDownloadCandidates(job, candidates, signal) {
   const list = Array.isArray(candidates) ? candidates.filter(item => item && item.url) : [];
   if (list.length < 2) return list;
   job.sourceLabel = '测速选择线路';
@@ -499,7 +502,7 @@ async function prioritizeUpdateDownloadCandidates(job, candidates) {
   job.updatedAt = Date.now();
   const probed = await Promise.all(list.map(async (candidate, index) => {
     try {
-      const probeSpeedBps = await probeUpdateCandidateSpeed(candidate);
+      const probeSpeedBps = await probeUpdateCandidateSpeed(candidate, signal);
       return Object.assign({}, candidate, { probeSpeedBps, probeFailed: false, originalIndex: index });
     } catch (err) {
       return Object.assign({}, candidate, { probeSpeedBps: 0, probeFailed: true, originalIndex: index });
@@ -687,22 +690,54 @@ function activeUpdateJobFor(version) {
   const jobs = Array.from(updateDownloadJobs.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   return jobs.find(job => job.version === version && (job.status === 'queued' || job.status === 'downloading' || job.status === 'ready'));
 }
+function isUpdateJobCancelled(job, error) {
+  return !!(job && ((job.abortController && job.abortController.signal.aborted) || job.status === 'cancelled'))
+    || !!(error && (error.code === 'UPDATE_CANCELLED' || error.name === 'AbortError'));
+}
+function throwIfUpdateJobCancelled(job) {
+  if (!isUpdateJobCancelled(job)) return;
+  throw updateError('UPDATE_CANCELLED', '更新任务已取消');
+}
+function cancelUpdateJob(job, reason) {
+  if (!job || !['queued', 'downloading'].includes(job.status)) return false;
+  const controller = job.abortController;
+  if (controller && !controller.signal.aborted) controller.abort(updateError('UPDATE_CANCELLED', reason || '更新任务已取消'));
+  job.status = 'cancelled';
+  job.error = 'UPDATE_CANCELLED';
+  job.errorReason = '更新已取消';
+  job.errorDetail = reason || 'UPDATE_CANCELLED';
+  job.message = '更新已取消';
+  job.updatedAt = Date.now();
+  return true;
+}
+function cancelUpdateJobs(reason) {
+  const cancelled = [];
+  updateDownloadJobs.forEach(job => {
+    if (cancelUpdateJob(job, reason)) cancelled.push(job.id);
+  });
+  return cancelled;
+}
 function trimUpdateJobs() {
   const jobs = Array.from(updateDownloadJobs.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  jobs.slice(8).forEach(job => updateDownloadJobs.delete(job.id));
+  jobs.slice(8).forEach(job => {
+    cancelUpdateJob(job, 'UPDATE_JOB_EVICTED');
+    updateDownloadJobs.delete(job.id);
+  });
 }
 async function downloadUpdateAsset(job) {
   const tmpPath = job.filePath + '.download';
   try {
+    throwIfUpdateJobCancelled(job);
     fs.mkdirSync(UPDATE_DOWNLOAD_DIR, { recursive: true });
     job.status = 'downloading';
     job.updatedAt = Date.now();
 
-    const resp = await fetch(job.downloadUrl, {
+    const resp = await fetchWithTimeout(job.downloadUrl, {
       headers: {
         'User-Agent': `Mineradio/${APP_VERSION}`,
       },
-    });
+      signal: job.abortController && job.abortController.signal,
+    }, 14000);
     if (!resp.ok) throw new Error('Download failed ' + resp.status);
 
     const totalHeader = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
@@ -720,6 +755,7 @@ async function downloadUpdateAsset(job) {
     const reader = resp.body.getReader();
     try {
       while (true) {
+        throwIfUpdateJobCancelled(job);
         const chunk = await reader.read();
         if (chunk.done) break;
         const buf = Buffer.from(chunk.value);
@@ -755,9 +791,11 @@ async function downloadUpdateAsset(job) {
     job.updatedAt = Date.now();
   } catch (e) {
     try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
-    job.status = 'error';
-    job.error = e.message || 'UPDATE_DOWNLOAD_FAILED';
-    job.updatedAt = Date.now();
+    if (!isUpdateJobCancelled(job, e)) {
+      job.status = 'error';
+      job.error = e.message || 'UPDATE_DOWNLOAD_FAILED';
+      job.updatedAt = Date.now();
+    }
   }
 }
 function sha512Base64(buffer) {
@@ -888,12 +926,15 @@ async function downloadUpdateAssetWithMirrors(job) {
   const baseCandidates = Array.isArray(job.downloadCandidates) && job.downloadCandidates.length
     ? job.downloadCandidates
     : uniqueDownloadCandidates(job.downloadUrl || '');
-  const candidates = await prioritizeUpdateDownloadCandidates(job, baseCandidates);
+  const signal = job.abortController && job.abortController.signal;
+  throwIfUpdateJobCancelled(job);
+  const candidates = await prioritizeUpdateDownloadCandidates(job, baseCandidates, signal);
   const failures = [];
   fs.mkdirSync(UPDATE_DOWNLOAD_DIR, { recursive: true });
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     try {
+      throwIfUpdateJobCancelled(job);
       try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
       ensureMirrorCanBeVerified(job, candidate);
       prepareUpdateJobAttempt(job, candidate, i, candidates.length);
@@ -901,6 +942,7 @@ async function downloadUpdateAssetWithMirrors(job) {
 
       const resp = await fetchWithTimeout(candidate.url, {
         headers: { 'User-Agent': `Mineradio/${APP_VERSION}` },
+        signal,
       }, 14000);
       if (!resp.ok) throw updateError('HTTP_' + resp.status, 'HTTP ' + resp.status);
 
@@ -915,6 +957,7 @@ async function downloadUpdateAssetWithMirrors(job) {
       const reader = resp.body.getReader();
       try {
         while (true) {
+          throwIfUpdateJobCancelled(job);
           const chunk = await reader.read();
           if (chunk.done) break;
           const buf = Buffer.from(chunk.value);
@@ -957,6 +1000,10 @@ async function downloadUpdateAssetWithMirrors(job) {
       return;
     } catch (err) {
       try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
+      if (isUpdateJobCancelled(job, err)) {
+        cancelUpdateJob(job, 'UPDATE_CANCELLED');
+        return;
+      }
       const info = classifyUpdateError(err);
       failures.push({ source: candidate.label || '下载线路', reason: info.reason, detail: info.detail });
       job.failedAttempts = failures.slice(-6);
@@ -1022,10 +1069,12 @@ function startUpdateDownloadJob(info) {
     createdAt: now,
     updatedAt: now,
     error: '',
+    abortController: new AbortController(),
   };
   updateDownloadJobs.set(job.id, job);
   trimUpdateJobs();
   downloadUpdateAssetWithMirrors(job).catch(function(err) {
+    if (isUpdateJobCancelled(job, err)) return;
     setUpdateJobError(job, err, '更新下载失败：' + classifyUpdateError(err).reason);
   });
   return publicUpdateJob(job);
@@ -1062,10 +1111,11 @@ function patchBackupPath(job, rel) {
   return path.join(UPDATE_PATCH_BACKUP_DIR, job.id, rel);
 }
 function backupPatchTarget(job, rel, target) {
-  if (!fs.existsSync(target)) return;
+  if (!fs.existsSync(target)) return false;
   const backup = patchBackupPath(job, rel);
   fs.mkdirSync(path.dirname(backup), { recursive: true });
   fs.copyFileSync(target, backup);
+  return true;
 }
 function writePatchFile(job, file) {
   const rel = safePatchRelativePath(file.path || file.name);
@@ -1076,24 +1126,53 @@ function writePatchFile(job, file) {
   const expected = String(file.sha256 || '').trim().toLowerCase();
   const actual = sha256Hex(content);
   if (expected && expected !== actual) throw new Error('PATCH_HASH_MISMATCH:' + rel);
-  backupPatchTarget(job, rel, target);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const existed = backupPatchTarget(job, rel, target);
+  const change = { path: rel, action: 'write', created: !existed };
   const tmp = target + '.mineradio-patch';
-  fs.writeFileSync(tmp, content);
-  fs.renameSync(tmp, target);
-  if (expected && sha256Hex(fs.readFileSync(target)) !== expected) throw new Error('PATCH_WRITE_VERIFY_FAILED:' + rel);
-  return rel;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, target);
+    if (expected && sha256Hex(fs.readFileSync(target)) !== expected) throw new Error('PATCH_WRITE_VERIFY_FAILED:' + rel);
+    return change;
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch (cleanupError) {}
+    err.patchChange = change;
+    throw err;
+  }
+}
+function deletePatchFile(job, file) {
+  const rel = safePatchRelativePath(file.path || file.name);
+  const target = rel ? patchTargetPath(rel) : null;
+  if (!rel || !target) throw new Error('INVALID_PATCH_DELETE');
+  const existed = backupPatchTarget(job, rel, target);
+  const change = { path: rel, action: 'delete', existed };
+  try {
+    if (existed) fs.rmSync(target, { force: true });
+    return change;
+  } catch (err) {
+    err.patchChange = change;
+    throw err;
+  }
 }
 function rollbackPatchBackups(job, changed) {
   const restored = [];
   const list = Array.isArray(changed) ? changed.slice().reverse() : [];
-  list.forEach(rel => {
+  list.forEach(change => {
+    const rel = typeof change === 'string' ? change : change && change.path;
     const target = patchTargetPath(rel);
     const backup = path.join(UPDATE_PATCH_BACKUP_DIR, job.id, rel);
-    if (!target || !fs.existsSync(backup)) return;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(backup, target);
-    restored.push(rel);
+    if (!target) return;
+    if (fs.existsSync(backup)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(backup, target);
+      restored.push(rel);
+      return;
+    }
+    if (change && change.created) {
+      fs.rmSync(target, { force: true });
+      restored.push(rel);
+    }
   });
   job.rollbackFiles = restored;
   job.updatedAt = Date.now();
@@ -1102,7 +1181,15 @@ function rollbackPatchBackups(job, changed) {
 function applyPatchFilesWithRollback(job, files) {
   const changed = [];
   try {
-    files.forEach(file => changed.push(writePatchFile(job, file)));
+    files.forEach(file => {
+      const action = String(file && (file.action || file.operation) || 'write').toLowerCase();
+      try {
+        changed.push(action === 'delete' ? deletePatchFile(job, file) : writePatchFile(job, file));
+      } catch (err) {
+        if (err.patchChange) changed.push(err.patchChange);
+        throw err;
+      }
+    });
     return changed;
   } catch (err) {
     rollbackPatchBackups(job, changed);
@@ -1115,11 +1202,13 @@ function normalizePatchPayload(payload) {
   if (type && type !== 'mineradio-resource-patch') throw new Error('UNSUPPORTED_PATCH_TYPE');
   const from = normalizeVersion(payload.from || payload.baseVersion || '');
   const to = normalizeVersion(payload.to || payload.version || payload.targetVersion || '');
-  const files = Array.isArray(payload.files) ? payload.files : [];
+  const files = Array.isArray(payload.files) ? payload.files.slice() : [];
+  const deletedFiles = Array.isArray(payload.deletedFiles) ? payload.deletedFiles : [];
+  deletedFiles.forEach(file => files.push({ path: file, action: 'delete' }));
   if (!from || compareVersions(from, APP_VERSION) !== 0) throw new Error('PATCH_VERSION_MISMATCH');
   if (!to || compareVersions(to, APP_VERSION) <= 0) throw new Error('PATCH_TARGET_VERSION_INVALID');
   if (!files.length) throw new Error('PATCH_EMPTY');
-  if (files.length > 40) throw new Error('PATCH_TOO_MANY_FILES');
+  if (files.length > PATCH_MAX_FILES) throw new Error('PATCH_TOO_MANY_FILES');
   return { from, to, files, restartRequired: payload.restartRequired !== false };
 }
 async function downloadPatchBufferFromCandidate(job, candidate, index, total) {
@@ -1129,9 +1218,11 @@ async function downloadPatchBufferFromCandidate(job, candidate, index, total) {
   job.message = '正在下载快速补丁';
   job.progress = 0;
   job.updatedAt = Date.now();
+  throwIfUpdateJobCancelled(job);
 
   const resp = await fetchWithTimeout(candidate.url, {
     headers: { 'User-Agent': `Mineradio/${APP_VERSION}` },
+    signal: job.abortController && job.abortController.signal,
   }, 12000);
   if (!resp.ok) throw updateError('HTTP_' + resp.status, 'HTTP ' + resp.status);
 
@@ -1142,6 +1233,7 @@ async function downloadPatchBufferFromCandidate(job, candidate, index, total) {
   let speedWindowAt = Date.now();
   let speedWindowBytes = 0;
   while (true) {
+    throwIfUpdateJobCancelled(job);
     const chunk = await reader.read();
     if (chunk.done) break;
     const buf = Buffer.from(chunk.value);
@@ -1174,15 +1266,17 @@ async function downloadAndApplyPatchWithMirrors(job) {
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     try {
+      throwIfUpdateJobCancelled(job);
       const raw = await downloadPatchBufferFromCandidate(job, candidate, i, candidates.length);
       const patch = normalizePatchPayload(JSON.parse(raw.toString('utf8').replace(/^\uFEFF/, '')));
       job.version = patch.to;
+      job.status = 'applying';
       job.message = '正在应用快速补丁';
       job.progress = 88;
       job.etaSeconds = 0;
       job.updatedAt = Date.now();
       const changed = applyPatchFilesWithRollback(job, patch.files);
-      job.changedFiles = changed;
+      job.changedFiles = changed.map(change => typeof change === 'string' ? change : change.path);
       job.status = 'ready';
       job.progress = 100;
       job.restartRequired = patch.restartRequired;
@@ -1190,6 +1284,10 @@ async function downloadAndApplyPatchWithMirrors(job) {
       job.updatedAt = Date.now();
       return;
     } catch (err) {
+      if (isUpdateJobCancelled(job, err)) {
+        cancelUpdateJob(job, 'UPDATE_CANCELLED');
+        return;
+      }
       const info = classifyUpdateError(err);
       failures.push({ source: candidate.label || '下载线路', reason: info.reason, detail: info.detail });
       job.failedAttempts = failures.slice(-6);
@@ -1240,10 +1338,12 @@ function startUpdatePatchJob(info) {
     createdAt: now,
     updatedAt: now,
     error: '',
+    abortController: new AbortController(),
   };
   updateDownloadJobs.set(job.id, job);
   trimUpdateJobs();
   downloadAndApplyPatchWithMirrors(job).catch(function(err) {
+    if (isUpdateJobCancelled(job, err)) return;
     setUpdateJobError(job, err, '快速补丁失败：' + classifyUpdateError(err).reason);
   });
   return publicUpdateJob(job);
@@ -1266,5 +1366,6 @@ module.exports = {
   beatCacheRootInfo,
   readBeatMapCache,
   writeBeatMapCache,
+  cancelUpdateJobs,
   updateDownloadJobs,
 };

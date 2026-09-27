@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function fallbackEscHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -85,7 +80,7 @@
       var cover = homeTileCover(item);
       var tone = homeToneForItem(item, i);
       var coverClass = 'home-tile-cover' + (cover ? ' has-cover' : '');
-      return '<button class="home-tile' + (!cover && loading ? ' home-skeleton' : '') + '" data-home-tone="' + esc(tone) + '" type="button" onclick="handleHomeTileClick(' + i + ')">' +
+      return '<button class="home-tile' + (!cover && loading ? ' home-skeleton' : '') + '" data-home-tone="' + esc(tone) + '" data-action="home-tile" data-index="' + i + '" type="button">' +
         '<div class="' + coverClass + '" style="' + (cover ? 'background-image:url(&quot;' + esc(cssImageUrl(cover)) + '&quot;)' : '') + '"></div>' +
         '<div class="home-tile-title">' + esc(item && item.title || '') + '</div>' +
         '<div class="home-tile-sub">' + esc(item && item.sub || '') + '</div>' +
@@ -93,9 +88,8 @@
     }).join('');
   }
 
-  global.MineradioModules.homeDiscoverView = {
-    buildHomeTiles: buildHomeTiles,
-    homeRailCopy: homeRailCopy,
-    renderHomeTilesHtml: renderHomeTilesHtml
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  buildHomeTiles,
+  homeRailCopy,
+  renderHomeTilesHtml,
+};

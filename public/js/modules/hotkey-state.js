@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function getHotkeyDefaults(actions) {
     var defaults = { local: {}, global: {} };
     (Array.isArray(actions) ? actions : []).forEach(function(action){
@@ -89,14 +84,13 @@
     return map;
   }
 
-  global.MineradioModules.hotkeyState = {
-    getHotkeyDefaults: getHotkeyDefaults,
-    hotkeyActionMeta: hotkeyActionMeta,
-    isModifierKeyCode: isModifierKeyCode,
-    normalizeHotkeyEvent: normalizeHotkeyEvent,
-    hotkeyDisplayPart: hotkeyDisplayPart,
-    formatHotkey: formatHotkey,
-    hotkeyToAccelerator: hotkeyToAccelerator,
-    hotkeyDuplicateMap: hotkeyDuplicateMap
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  getHotkeyDefaults,
+  hotkeyActionMeta,
+  isModifierKeyCode,
+  normalizeHotkeyEvent,
+  hotkeyDisplayPart,
+  formatHotkey,
+  hotkeyToAccelerator,
+  hotkeyDuplicateMap,
+};

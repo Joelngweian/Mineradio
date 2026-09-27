@@ -47,6 +47,8 @@ public/index.*.html
 
 # Screenshots and transient verification artifacts
 .playwright-cli/
+playwright-report/
+test-results/
 output/
 tmp/
 *.png.tmp

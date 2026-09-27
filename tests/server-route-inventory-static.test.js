@@ -5,19 +5,22 @@ const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(root, 'server-app.js'), 'utf8');
+const ytmRouteSource = fs.readFileSync(path.join(root, 'server', 'routes', 'ytm-routes.js'), 'utf8');
 
 function uniqueSorted(list) {
   return Array.from(new Set(list)).sort();
 }
 
 test('server keeps an explicit inventory for every raw API route branch', () => {
-  const branchRoutes = uniqueSorted(Array.from(serverSource.matchAll(/pn === '([^']+)'/g)).map(match => match[1]).filter(route => route.startsWith('/api/')));
+  const appBranchRoutes = Array.from(serverSource.matchAll(/pn === '([^']+)'/g)).map(match => match[1]);
+  const ytmBranchRoutes = Array.from(ytmRouteSource.matchAll(/case '([^']+)'/g)).map(match => match[1]);
+  const branchRoutes = uniqueSorted(appBranchRoutes.concat(ytmBranchRoutes).filter(route => route.startsWith('/api/')));
   const inventoryMatch = serverSource.match(/const API_ROUTE_PATHS = Object\.freeze\(\[([\s\S]*?)\]\);/);
   assert.ok(inventoryMatch, 'server-app.js should define API_ROUTE_PATHS near the raw http route handler');
   const inventoryRoutes = uniqueSorted(Array.from(inventoryMatch[1].matchAll(/'([^']+)'/g)).map(match => match[1]));
 
   assert.deepEqual(inventoryRoutes, branchRoutes);
-  assert.equal(inventoryRoutes.length, 42);
+  assert.equal(inventoryRoutes.length, 44);
 });
 
 test('unknown api paths return json 404 before static fallback', () => {

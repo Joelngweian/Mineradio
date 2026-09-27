@@ -1,19 +1,14 @@
-(function(global) {
-  'use strict';
+import { queueTextKey as queueStateTextKey } from './queue-state.js';
 
-  global.MineradioModules = global.MineradioModules || {};
+function queueTextKey(text) {
+  return queueStateTextKey(text);
+}
 
-  function queueTextKey(text) {
-    var queueState = global.MineradioModules && global.MineradioModules.queueState;
-    if (queueState && typeof queueState.queueTextKey === 'function') return queueState.queueTextKey(text);
-    return String(text || '').trim().toLowerCase().replace(/[\s._()[\]{}'"|/\\:-]+/g, '');
-  }
-
-  function defaultProviderKey(song) {
+function defaultProviderKey(song) {
     return song && (song.provider || song.source || song.platform) || 'youtube';
   }
 
-  function helperFn(helpers, name, fallback) {
+function helperFn(helpers, name, fallback) {
     return helpers && typeof helpers[name] === 'function' ? helpers[name] : fallback;
   }
 
@@ -115,14 +110,13 @@
     return { queue: nextQueue, added: additions.length, seedIndex: seedIndex };
   }
 
-  global.MineradioModules.queueController = {
-    queueTextKey: queueTextKey,
-    queueItemKey: queueItemKey,
-    sameQueueSeedSong: sameQueueSeedSong,
-    findQueueSeedIndex: findQueueSeedIndex,
-    radioRecommendationKey: radioRecommendationKey,
-    queueHasRecommendationAfterSeed: queueHasRecommendationAfterSeed,
-    createSearchSeedQueue: createSearchSeedQueue,
-    mergeRadioRecommendations: mergeRadioRecommendations
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  queueTextKey,
+  queueItemKey,
+  sameQueueSeedSong,
+  findQueueSeedIndex,
+  radioRecommendationKey,
+  queueHasRecommendationAfterSeed,
+  createSearchSeedQueue,
+  mergeRadioRecommendations,
+};

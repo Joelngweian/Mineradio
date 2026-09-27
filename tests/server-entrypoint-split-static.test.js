@@ -17,6 +17,21 @@ test('server entrypoint stays thin and delegates to the app module', () => {
   assert.ok(fs.existsSync(appPath), 'server-app.js should own the HTTP app wiring');
 });
 
+test('server defers heavy YouTube Music runtime dependencies until a music request needs them', () => {
+  const appSource = fs.readFileSync(appPath, 'utf8');
+  const routeSource = fs.readFileSync(path.join(root, 'server', 'routes', 'ytm-routes.js'), 'utf8');
+
+  assert.doesNotMatch(appSource, /^const \{ Innertube, Platform \} = require\('youtubei\.js'\);/m);
+  assert.doesNotMatch(appSource, /^const \{ JSDOM \} = require\('jsdom'\);/m);
+  assert.match(appSource, /function getYtmRuntime\(\)/);
+  assert.match(appSource, /function LazyJSDOM\(/);
+  assert.match(appSource, /function ensureYtmServices\(\)/);
+  assert.match(appSource, /getRadioService: function\(\) \{ ensureYtmServices\(\); return radioService; \}/);
+  assert.match(appSource, /getAudioService: function\(\) \{ ensureYtmServices\(\); return ytmAudioService; \}/);
+  assert.match(routeSource, /getRadioService: getRadioServiceOption/);
+  assert.match(routeSource, /const audioService = getAudioService\(\);/);
+});
+
 test('update and beat-cache implementation is outside the HTTP app file', () => {
   assert.ok(fs.existsSync(updateServicePath), 'server/update-service.js should exist');
   const appSource = fs.readFileSync(appPath, 'utf8');

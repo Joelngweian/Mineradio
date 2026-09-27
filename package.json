@@ -1,7 +1,7 @@
 {
   "name": "mineradio",
   "productName": "Mineradio",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "沉浸式音乐播放器，融合天气电台、歌词舞台、粒子视觉和 3D 歌单架。",
   "author": "Mineradio",
   "main": "desktop/main.js",
@@ -11,6 +11,11 @@
     "build:win": "electron-builder --win nsis",
     "build:win:dir": "electron-builder --win dir",
     "patch:release": "node build/generate-release-patch.js",
+    "test:unit": "node --test tests/*.test.js",
+    "test:e2e": "playwright test",
+    "test:live:playback": "node --test tests/live/playback-chain-live.test.js",
+    "test:live:e2e:playback": "playwright test --config playwright.live.config.cjs",
+    "test": "npm run test:unit && npm run test:e2e",
     "smoke:wallpaper": "node tests/smoke/wallpaper-transition-smoke.js",
     "smoke:wallpaper:app": "node tests/smoke/wallpaper-main-smoke.js",
     "smoke:search-radio": "node tests/smoke/search-radio-flow-smoke.js"
@@ -97,6 +102,7 @@
     "youtubei.js": "^17.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "electron": "^42.4.1",
     "electron-builder": "^26.15.3",
     "rcedit": "^5.0.2"

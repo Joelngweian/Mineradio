@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function normalizeArtistNameForMatch(name) {
     return String(name || '')
       .toLowerCase()
@@ -42,7 +37,7 @@
     var cssImageUrl = helperFn(helpers, 'cssImageUrl', function(value) { return String(value || '').replace(/'/g, "\\'"); });
     var cover = coverSrc(song, 220);
     var sub = song.artist || sourceLabel(song) || '推荐歌曲';
-    return '<button class="home-pl-card home-rec-card" type="button" onclick="playHomeRecommendation(' + index + ')" title="' + esc(song.name || '') + '">' +
+    return '<button class="home-pl-card home-rec-card" type="button" data-action="home-recommendation" data-index="' + index + '" title="' + esc(song.name || '') + '">' +
       '<div class="home-pl-cover' + (cover ? ' has-cover' : '') + '"' + (cover ? ' style="background-image:url(\'' + cssImageUrl(cover) + '\')"' : '') + '></div>' +
       '<div class="home-pl-name">' + esc(song.name || '推荐歌曲') + '</div>' +
       '<div class="home-pl-sub">' + esc(sub) + '</div>' +
@@ -58,10 +53,9 @@
     }).join('');
   }
 
-  global.MineradioModules.homeRecommendations = {
-    normalizeArtistNameForMatch: normalizeArtistNameForMatch,
-    artistMatchScore: artistMatchScore,
-    renderRecommendationCard: renderRecommendationCard,
-    renderRecommendationCards: renderRecommendationCards
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  normalizeArtistNameForMatch,
+  artistMatchScore,
+  renderRecommendationCard,
+  renderRecommendationCards,
+};

@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function normalizeVersionText(value) {
     return String(value || '').trim().replace(/^v/i, '');
   }
@@ -26,9 +21,8 @@
     return next;
   }
 
-  global.MineradioModules.appVersion = {
-    normalizeVersionText: normalizeVersionText,
-    applyAppVersionState: applyAppVersionState,
-    refreshAppVersionState: refreshAppVersionState
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  normalizeVersionText,
+  applyAppVersionState,
+  refreshAppVersionState,
+};

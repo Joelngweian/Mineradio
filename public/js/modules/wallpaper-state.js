@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function normalizeRotateMode(mode) {
     return /^(off|loop|shuffle)$/.test(String(mode || '')) ? String(mode) : 'off';
   }
@@ -55,13 +50,12 @@
     };
   }
 
-  global.MineradioModules.wallpaperState = {
-    normalizeRotateMode: normalizeRotateMode,
-    normalizeRotateMinutes: normalizeRotateMinutes,
-    normalizeRotateItems: normalizeRotateItems,
-    normalizeRotateTransition: normalizeRotateTransition,
-    transitionLabel: transitionLabel,
-    wallpaperSwapExitTransform: wallpaperSwapExitTransform,
-    beginWallpaperSwap: beginWallpaperSwap
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  normalizeRotateMode,
+  normalizeRotateMinutes,
+  normalizeRotateItems,
+  normalizeRotateTransition,
+  transitionLabel,
+  wallpaperSwapExitTransform,
+  beginWallpaperSwap,
+};

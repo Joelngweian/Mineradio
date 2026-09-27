@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function fallbackEscHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -74,9 +69,8 @@
     }).join('');
   }
 
-  global.MineradioModules.fullLyricsView = {
-    buildFullLyricsViewState: buildFullLyricsViewState,
-    findActiveLyricIndex: findActiveLyricIndex,
-    renderFullLyricsHtml: renderFullLyricsHtml
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  buildFullLyricsViewState,
+  findActiveLyricIndex,
+  renderFullLyricsHtml,
+};

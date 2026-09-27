@@ -55,28 +55,45 @@ function readFileAtRef(ref, rel) {
   return runGit(['show', `${ref}:${rel}`]);
 }
 
+function versionAtRef(ref) {
+  const packageInfo = JSON.parse(readFileAtRef(ref, 'package.json').toString('utf8'));
+  const version = normalizeVersion(packageInfo && packageInfo.version);
+  if (!version) throw new Error(`Missing package version at ${ref}`);
+  return version;
+}
+
 function sha256Hex(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
-function changedPatchFiles(fromRef, toRef) {
-  const output = gitText(['diff', '--name-only', fromRef, toRef, '--']);
-  return output
-    .split(/\r?\n/)
-    .map(safePatchRelativePath)
-    .filter(Boolean)
-    .filter((rel, index, list) => list.indexOf(rel) === index)
-    .filter(rel => fileExistsAtRef(toRef, rel));
+function changedPatchEntries(fromRef, toRef) {
+  const output = gitText(['diff', '--name-status', '--no-renames', fromRef, toRef, '--']);
+  const entries = [];
+  output.split(/\r?\n/).forEach(line => {
+    if (!line.trim()) return;
+    const columns = line.split('\t');
+    const status = String(columns.shift() || '').trim().toUpperCase();
+    const rel = safePatchRelativePath(columns[0]);
+    if (!rel || entries.some(entry => entry.path === rel)) return;
+    if (status === 'D') {
+      entries.push({ path: rel, action: 'delete' });
+      return;
+    }
+    if (!fileExistsAtRef(toRef, rel)) return;
+    entries.push({ path: rel, action: 'write' });
+  });
+  return entries;
 }
 
 function buildPatch(fromRef, toRef) {
-  const from = normalizeVersion(fromRef);
-  const to = normalizeVersion(toRef);
-  if (!from || !to) usage();
-  const files = changedPatchFiles(fromRef, toRef).map(rel => {
-    const content = readFileAtRef(toRef, rel);
+  const from = versionAtRef(fromRef);
+  const to = versionAtRef(toRef);
+  const files = changedPatchEntries(fromRef, toRef).map(entry => {
+    if (entry.action === 'delete') return entry;
+    const content = readFileAtRef(toRef, entry.path);
     return {
-      path: rel,
+      path: entry.path,
+      action: 'write',
       encoding: 'base64',
       sha256: sha256Hex(content),
       contentBase64: content.toString('base64')

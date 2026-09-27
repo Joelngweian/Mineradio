@@ -30,12 +30,12 @@ function extractFunction(source, name) {
 
 test('update downloads probe candidate speed before choosing a line', () => {
   assert.match(serverSource, /const UPDATE_PROBE_BYTES = 512 \* 1024/);
-  assert.match(serverSource, /async function probeUpdateCandidateSpeed\(candidate\)/);
+  assert.match(serverSource, /async function probeUpdateCandidateSpeed\(candidate, signal\)/);
   assert.match(serverSource, /Range': 'bytes=0-' \+ \(UPDATE_PROBE_BYTES - 1\)/);
-  assert.match(serverSource, /async function prioritizeUpdateDownloadCandidates\(job, candidates\)/);
+  assert.match(serverSource, /async function prioritizeUpdateDownloadCandidates\(job, candidates, signal\)/);
   assert.match(serverSource, /probed\.sort\(\(a, b\) => b\.probeSpeedBps - a\.probeSpeedBps\)/);
   assert.match(serverSource, /job\.sourceLabel = /);
-  assert.match(serverSource, /await prioritizeUpdateDownloadCandidates\(job, baseCandidates\)/);
+  assert.match(serverSource, /await prioritizeUpdateDownloadCandidates\(job, baseCandidates, signal\)/);
 });
 
 test('slow update downloads switch to the next candidate instead of waiting forever', () => {
@@ -98,13 +98,41 @@ test('patch application restores backups when any file write fails', () => {
   const applySource = extractFunction(serverSource, 'applyPatchFilesWithRollback');
   assert.match(applySource, /try \{/);
   assert.match(applySource, /writePatchFile\(job, file\)/);
+  assert.match(applySource, /deletePatchFile\(job, file\)/);
+  assert.match(applySource, /action === 'delete'/);
+  assert.match(applySource, /err\.patchChange/);
   assert.match(applySource, /rollbackPatchBackups\(job, changed\)/);
   assert.match(applySource, /throw err/);
 
   const rollbackSource = extractFunction(serverSource, 'rollbackPatchBackups');
   assert.match(rollbackSource, /UPDATE_PATCH_BACKUP_DIR/);
   assert.match(rollbackSource, /fs\.copyFileSync\(backup, target\)/);
+  assert.match(rollbackSource, /change\.created/);
+  assert.match(rollbackSource, /fs\.rmSync\(target, \{ force: true \}\)/);
   assert.match(rollbackSource, /job\.rollbackFiles = restored/);
+});
+
+test('module split releases allow a bounded number of safe patch files', () => {
+  assert.match(serverSource, /const PATCH_MAX_FILES = 120/);
+  assert.match(serverSource, /files\.length > PATCH_MAX_FILES/);
+});
+
+test('patch generator and payload support deleted resources', () => {
+  const patchGeneratorSource = fs.readFileSync(path.join(root, 'build', 'generate-release-patch.js'), 'utf8');
+  assert.match(patchGeneratorSource, /\['diff', '--name-status', '--no-renames'/);
+  assert.match(patchGeneratorSource, /if \(status === 'D'\)/);
+  assert.match(patchGeneratorSource, /action: 'delete'/);
+  assert.match(serverSource, /const deletedFiles = Array\.isArray\(payload\.deletedFiles\)/);
+  assert.match(serverSource, /fs\.rmSync\(target, \{ force: true \}\)/);
+  assert.match(serverSource, /job\.changedFiles = changed\.map/);
+});
+
+test('patch generator names a patch from package versions instead of Git ref names', () => {
+  const patchGeneratorSource = fs.readFileSync(path.join(root, 'build', 'generate-release-patch.js'), 'utf8');
+  assert.match(patchGeneratorSource, /function versionAtRef\(ref\)/);
+  assert.match(patchGeneratorSource, /readFileAtRef\(ref, 'package\.json'\)/);
+  assert.match(patchGeneratorSource, /const from = versionAtRef\(fromRef\)/);
+  assert.match(patchGeneratorSource, /const to = versionAtRef\(toRef\)/);
 });
 
 test('server startup uses a testable utf8 console helper on Windows', () => {

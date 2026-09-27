@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function queueTextKey(text) {
     return String(text || '').trim().toLowerCase().replace(/[\s._()[\]{}'"|/\\:-]+/g, '');
   }
@@ -71,14 +66,14 @@
       ? '<img src="' + esc(thumb) + '" alt="" loading="lazy" decoding="async" onerror="this.style.opacity=0.2">'
       : '<div style="width:38px;height:38px;border-radius:6px;background:rgba(255,255,255,.06);flex-shrink:0"></div>';
     var liked = !!isLiked(song);
-    return '<div class="queue-item' + (index === currentIndex ? ' now' : '') + '" onclick="playQueueAt(' + index + ')">' +
+    return '<div class="queue-item' + (index === currentIndex ? ' now' : '') + '" data-action="queue-play" data-index="' + index + '">' +
       imgTag +
-      '<div class="qi-info"><div class="qi-name">' + esc(song.name) + '</div><div class="qi-sub"><button class="queue-artist-link" type="button" onclick="event.stopPropagation();openQueueArtist(' + index + ')">' + esc(song.artist || '未知歌手') + '</button></div></div>' +
+      '<div class="qi-info"><div class="qi-name">' + esc(song.name) + '</div><div class="qi-sub"><button class="queue-artist-link" type="button" data-action="queue-artist" data-index="' + index + '" data-stop-propagation="true">' + esc(song.artist || '未知歌手') + '</button></div></div>' +
       '<div class="qi-act">' +
-        '<button class="' + (liked ? 'liked' : '') + '" onclick="event.stopPropagation();toggleLikeQueueIndex(' + index + ')" title="' + (liked ? '取消红心' : '红心喜欢') + '">' + heartIcon() + '</button>' +
-        '<button class="queue-next" onclick="event.stopPropagation();queueIndexNext(' + index + ')" title="下一首播放">下</button>' +
-        '<button onclick="event.stopPropagation();collectQueueIndex(' + index + ')" title="收藏到歌单">' + plusIcon() + '</button>' +
-        '<button onclick="event.stopPropagation();removeFromQueue(' + index + ')" title="移除">×</button>' +
+        '<button class="' + (liked ? 'liked' : '') + '" data-action="queue-like" data-index="' + index + '" data-stop-propagation="true" title="' + (liked ? '取消红心' : '红心喜欢') + '">' + heartIcon() + '</button>' +
+        '<button class="queue-next" data-action="queue-next" data-index="' + index + '" data-stop-propagation="true" title="下一首播放">下</button>' +
+        '<button data-action="queue-collect" data-index="' + index + '" data-stop-propagation="true" title="收藏到歌单">' + plusIcon() + '</button>' +
+        '<button data-action="queue-remove" data-index="' + index + '" data-stop-propagation="true" title="移除">×</button>' +
       '</div>' +
     '</div>';
   }
@@ -90,12 +85,11 @@
     }).join('');
   }
 
-  global.MineradioModules.queueState = {
-    queueTextKey: queueTextKey,
-    isPlaceholderQueueText: isPlaceholderQueueText,
-    isValidQueueSong: isValidQueueSong,
-    isUsefulRadioSong: isUsefulRadioSong,
-    renderQueueItemHtml: renderQueueItemHtml,
-    renderQueueItemsHtml: renderQueueItemsHtml
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  queueTextKey,
+  isPlaceholderQueueText,
+  isValidQueueSong,
+  isUsefulRadioSong,
+  renderQueueItemHtml,
+  renderQueueItemsHtml,
+};

@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function isNoLyricText(text) {
     var compact = String(text || '').replace(/\s+/g, '').replace(/[，,。.!！?？、~～]/g, '');
     return !compact ||
@@ -120,13 +115,12 @@
     return prog * prog * (3 - 2 * prog);
   }
 
-  global.MineradioModules.lyricsState = {
-    isNoLyricText: isNoLyricText,
-    withLyricFallback: withLyricFallback,
-    lyricTagTimeToSeconds: lyricTagTimeToSeconds,
-    finalizeLyricLineDurations: finalizeLyricLineDurations,
-    parseLyricText: parseLyricText,
-    parseYrcText: parseYrcText,
-    getLyricLineProgress: getLyricLineProgress
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  isNoLyricText,
+  withLyricFallback,
+  lyricTagTimeToSeconds,
+  finalizeLyricLineDurations,
+  parseLyricText,
+  parseYrcText,
+  getLyricLineProgress,
+};

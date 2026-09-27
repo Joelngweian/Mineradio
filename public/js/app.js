@@ -1,5 +1,50 @@
-'use strict';
-var MineradioModules = window.MineradioModules || (window.MineradioModules = {});
+import * as apiClient from './modules/api-client.js';
+import * as playbackSession from './modules/playback-session.js';
+import * as appVersion from './modules/app-version.js';
+import * as wallpaperState from './modules/wallpaper-state.js';
+import * as queueState from './modules/queue-state.js';
+import * as queueController from './modules/queue-controller.js';
+import * as radioQueue from './modules/radio-queue.js';
+import * as updatePanel from './modules/update-panel.js';
+import * as homeRecommendations from './modules/home-recommendations.js';
+import * as homeDiscoverView from './modules/home-discover-view.js';
+import * as playlistDetailView from './modules/playlist-detail-view.js';
+import * as hotkeyState from './modules/hotkey-state.js';
+import * as fxArchiveState from './modules/fx-archive-state.js';
+import * as fullLyricsView from './modules/full-lyrics-view.js';
+import { createFullLyricsController } from './modules/full-lyrics-controller.js';
+import { createLyricsLoader } from './modules/lyrics-loader.js';
+import { createDynamicActionDelegator } from './modules/dynamic-action-delegator.js';
+import { createStartupTaskQueue } from './modules/startup-task-queue.js';
+import * as lyricsState from './modules/lyrics-state.js';
+import * as beatDynamics from './modules/beat-dynamics.js';
+import * as listenStatsModule from './modules/listen-stats.js';
+import * as resourceLifecycle from './modules/resource-lifecycle.js';
+import * as playbackObservabilityModule from './modules/playback-observability.js';
+import * as failureDiagnostics from './modules/failure-diagnostics.js';
+
+const MineradioModules = Object.freeze({
+  apiClient,
+  playbackSession,
+  appVersion,
+  wallpaperState,
+  queueState,
+  queueController,
+  radioQueue,
+  updatePanel,
+  homeRecommendations,
+  homeDiscoverView,
+  playlistDetailView,
+  hotkeyState,
+  fxArchiveState,
+  fullLyricsView,
+  lyricsState,
+  beatDynamics,
+  listenStats: listenStatsModule,
+  resourceLifecycle,
+  playbackObservability: playbackObservabilityModule,
+  failureDiagnostics,
+});
 
 // ============================================================
 //  Global State
@@ -31,6 +76,59 @@ var googleWebLoginBusy = false;
 var loginStatusChecked = false, loginStatusCheckFailed = false;
 var qrPollTimer = null, qrKey = null;
 var volumeTween = null, trackSwitchToken = 0;
+var resourceLifecycleManager = MineradioModules.resourceLifecycle.createResourceLifecycle();
+var backgroundTaskScope = resourceLifecycleManager.createScope('background');
+var playbackTaskScope = resourceLifecycleManager.createScope('playback');
+var playbackSessionManager = MineradioModules.playbackSession.create();
+var playbackObservability = MineradioModules.playbackObservability.createPlaybackObservability({
+  maxSessions: 8,
+  maxEventsPerSession: 72,
+});
+var failureDiagnosticExporter = MineradioModules.failureDiagnostics.createFailureDiagnosticExporter({
+  apiJson: function(url, options) { return apiJson(url, options); },
+  getDesktopApi: function() { return getDesktopWindowApi(); },
+  getTrace: function() { return playbackObservability.snapshot(); },
+  getContext: function() {
+    var song = playQueue && currentIdx >= 0 ? playQueue[currentIdx] : null;
+    return {
+      appVersion: (updatePreviewState && updatePreviewState.currentVersion) || '',
+      playbackQuality: playbackQuality || '',
+      queueLength: Array.isArray(playQueue) ? playQueue.length : 0,
+      currentTrack: song ? {
+        id: song.id || song.videoId || '',
+        name: song.name || song.title || '',
+        artist: song.artist || song.author || '',
+        source: song.source || song.provider || '',
+      } : null,
+    };
+  },
+});
+if (typeof window !== 'undefined') {
+  window.__mineradioPlaybackTrace = Object.freeze({
+    snapshot: function() { return playbackObservability.snapshot(); },
+    clear: function() { playbackObservability.clear(); },
+  });
+}
+function beginPlaybackSession(meta) {
+  playbackTaskScope = resourceLifecycleManager.createScope('playback');
+  var session = playbackSessionManager.begin(meta);
+  trackSwitchToken = session.token;
+  playbackObservability.begin({
+    token: session.token,
+    sessionId: session.id,
+    index: meta && meta.index,
+    song: meta && meta.song,
+    context: meta && meta.context,
+  });
+  return session;
+}
+function cancelPlaybackSession() {
+  playbackObservability.finish('cancelled', { reason: 'playback-session-cancelled' }, trackSwitchToken);
+  resourceLifecycleManager.dispose('playback');
+  playbackTaskScope = resourceLifecycleManager.createScope('playback');
+  trackSwitchToken = playbackSessionManager.cancel();
+  return trackSwitchToken;
+}
 var audioFadeTimer = null, audioElementFadeFrame = 0, audioFadeSerial = 0;
 var AUDIO_FADE_IN_MS = 460;
 var AUDIO_FADE_OUT_MS = 420;
@@ -100,8 +198,23 @@ var homeWeatherLoadTimer = null;
 var homeWeatherLoadPromise = null;
 var weatherRadioStartBusy = false;
 var activeRadioContext = null;
-var listenStatsState = loadListenStatsState();
-var listenSession = null;
+var startupTaskQueue = null;
+var listenStatsController = MineradioModules.listenStats.createListenStatsController({
+  storage: window.localStorage,
+  storageKey: HOME_LISTEN_STATS_KEY,
+  getAudio: function() { return audio; },
+  getCurrentSong: currentCoverSong,
+  getActiveContext: function() { return activeRadioContext; },
+  songKey: queueItemKey,
+  snapshotSong: listenSongSnapshot,
+  recordToSong: listenRecordToSong,
+  cloneSong: cloneSong,
+  normalizeArtistName: normalizeArtistNameForMatch,
+  artistMatchScore: MineradioModules.homeRecommendations.artistMatchScore,
+  onRecorded: function() {
+    if (emptyHomeActive) renderHomeDiscover();
+  },
+});
 var appPerfMarks = [];
 function markAppPerf(name) {
   try {
@@ -483,7 +596,7 @@ function resetDjBeatMapState() {
 
 function cancelDjBeatAnalysisTimer() {
   if (djBeatAnalysisTimer) {
-    clearTimeout(djBeatAnalysisTimer);
+    djBeatAnalysisTimer.cancel();
     djBeatAnalysisTimer = null;
   }
 }
@@ -1415,8 +1528,13 @@ function flushPersistentVisualState() {
   try { saveLyricLayout(); } catch (e) {}
   try { saveFreeCameraState(); } catch (e) {}
 }
-window.addEventListener('beforeunload', flushPersistentVisualState);
-window.addEventListener('pagehide', flushPersistentVisualState);
+function disposeAppRuntimeResources() {
+  playbackObservability.finish('shutdown', { reason: 'app-unload' }, trackSwitchToken);
+  resourceLifecycleManager.disposeAll();
+  flushPersistentVisualState();
+}
+window.addEventListener('beforeunload', disposeAppRuntimeResources);
+window.addEventListener('pagehide', disposeAppRuntimeResources);
 
 function resetBeatCameraSync(t) {
   beatCam.nextIdx = 0;
@@ -1668,51 +1786,50 @@ function yieldToIdle(timeout) {
 function scheduleAnalysisTask(fn, timeout) {
   if (typeof fn !== 'function') return;
   if (isHiddenForBackgroundOptimization()) {
-    setTimeout(fn, 0);
-    return;
+    return playbackTaskScope.timeout(fn, 0);
   }
   if (window.requestIdleCallback) {
-    requestIdleCallback(fn, { timeout: timeout || 900 });
+    return playbackTaskScope.idle(fn, timeout || 900);
   } else {
-    setTimeout(fn, Math.min(timeout || 420, 420));
+    return playbackTaskScope.timeout(fn, Math.min(timeout || 420, 420));
   }
 }
 
 function scheduleVisualApply(fn, delay, timeout) {
   if (typeof fn !== 'function') return;
-  setTimeout(function(){
+  return backgroundTaskScope.timeout(function(){
     if (isHiddenForBackgroundOptimization() || typeof requestAnimationFrame !== 'function') {
       fn();
       return;
     }
-    var run = function(){ requestAnimationFrame(fn); };
-    if (window.requestIdleCallback) requestIdleCallback(run, { timeout: timeout || 360 });
+    var run = function(){ backgroundTaskScope.frame(fn); };
+    if (window.requestIdleCallback) backgroundTaskScope.idle(run, timeout || 360);
     else run();
   }, delay || 0);
 }
 
 function scheduleUiWarmTask(fn, timeout) {
   if (typeof fn !== 'function') return;
-  var run = function(){ requestAnimationFrame(fn); };
+  var run = function(){ backgroundTaskScope.frame(fn); };
   if (isHiddenForBackgroundOptimization() || typeof requestAnimationFrame !== 'function') {
-    setTimeout(fn, 0);
+    return backgroundTaskScope.timeout(fn, 0);
   } else if (window.requestIdleCallback) {
-    requestIdleCallback(run, { timeout: timeout || 220 });
+    return backgroundTaskScope.idle(run, timeout || 220);
   } else {
-    requestAnimationFrame(fn);
+    return run();
   }
 }
 
 function cancelBeatAnalysisTimer() {
   if (beatAnalysisTimer) {
-    clearTimeout(beatAnalysisTimer);
+    beatAnalysisTimer.cancel();
     beatAnalysisTimer = null;
   }
 }
 
 function cancelBeatPrefetchTimer() {
   if (beatPrefetchTimer) {
-    clearTimeout(beatPrefetchTimer);
+    beatPrefetchTimer.cancel();
     beatPrefetchTimer = null;
   }
 }
@@ -7510,32 +7627,33 @@ async function analyzeMusicTempoInWorker(buffer, token) {
     var worker = new Worker(getMusicTempoWorkerUrl());
     return await new Promise(function(resolve) {
       var done = false;
-      var timer = setTimeout(function(){
+      var timeoutResource = null;
+      var workerResource = null;
+      function settle(value) {
         if (done) return;
         done = true;
-        worker.terminate();
-        resolve(null);
-      }, 16000);
+        if (timeoutResource) timeoutResource.cancel();
+        if (workerResource) workerResource.cancel();
+        resolve(value);
+      }
+      workerResource = playbackTaskScope.trackWorker(worker, function() {
+        if (!done) settle(null);
+      });
+      timeoutResource = playbackTaskScope.timeout(function(){ settle(null); }, 16000);
       worker.onmessage = function(ev) {
         if (done) return;
-        done = true;
-        clearTimeout(timer);
-        worker.terminate();
         var data = ev.data || {};
         if (!data.ok) {
           console.warn('music-tempo worker failed:', data.error);
-          resolve(null);
+          settle(null);
           return;
         }
-        resolve(data);
+        settle(data);
       };
       worker.onerror = function(err) {
         if (done) return;
-        done = true;
-        clearTimeout(timer);
-        worker.terminate();
         console.warn('music-tempo worker error:', err && err.message ? err.message : err);
-        resolve(null);
+        settle(null);
       };
       worker.postMessage({
         mono: mono.buffer,
@@ -7560,12 +7678,12 @@ function scheduleBeatAnalysis(songId, audioUrl, token, song) {
   cancelBeatAnalysisTimer();
   beatAnalysisStartedAt = 0;
   hideBeatChip();
-  beatAnalysisTimer = setTimeout(function waitForQuietStart(){
+  beatAnalysisTimer = playbackTaskScope.timeout(function waitForQuietStart(){
     beatAnalysisTimer = null;
     if (token !== beatMapToken || !audio || audio.paused) return;
     var current = audio.currentTime || 0;
     if (current < beatAnalysisConfig.minPlaybackSec) {
-      beatAnalysisTimer = setTimeout(waitForQuietStart, Math.max(500, (beatAnalysisConfig.minPlaybackSec - current) * 1000));
+      beatAnalysisTimer = playbackTaskScope.timeout(waitForQuietStart, Math.max(500, (beatAnalysisConfig.minPlaybackSec - current) * 1000), 'beat-analysis');
       return;
     }
     var startAnalysis = async function(){
@@ -7577,10 +7695,10 @@ function scheduleBeatAnalysis(songId, audioUrl, token, song) {
       }
       if (token !== beatMapToken || !audio || audio.paused || beatMapCache[songId]) return;
       if (beatMapBusy) {
-        beatAnalysisTimer = setTimeout(function(){
+        beatAnalysisTimer = playbackTaskScope.timeout(function(){
           beatAnalysisTimer = null;
           scheduleAnalysisTask(startAnalysis, 260);
-        }, 420);
+        }, 420, 'beat-analysis');
         return;
       }
       beatAnalysisStartedAt = performance.now();
@@ -7597,7 +7715,7 @@ function scheduleBeatAnalysis(songId, audioUrl, token, song) {
       });
     };
     scheduleAnalysisTask(startAnalysis, beatAnalysisConfig.idleTimeout);
-  }, beatAnalysisConfig.delayMs);
+  }, beatAnalysisConfig.delayMs, 'beat-analysis');
 }
 
 function beatMapSongKey(song) {
@@ -7728,10 +7846,10 @@ function scheduleQueueBeatPrefetch(fromIdx, delayMs, state) {
   var startIdx = isFinite(fromIdx) ? fromIdx : currentIdx;
   var waitMs = delayMs == null ? 1800 : delayMs;
   if (typeof isRenderInteractionActive === 'function' && isRenderInteractionActive()) waitMs = Math.max(waitMs, 2200);
-  beatPrefetchTimer = setTimeout(function(){
+  beatPrefetchTimer = playbackTaskScope.timeout(function(){
     beatPrefetchTimer = null;
     runQueueBeatPrefetch(startIdx, token, seq, prefetchState);
-  }, waitMs);
+  }, waitMs, 'beat-prefetch');
 }
 
 async function runQueueBeatPrefetch(fromIdx, token, seq, state) {
@@ -8552,13 +8670,13 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
 function schedulePodcastDjAnalysis(songKey, audioUrl, token, durationSec) {
   cancelDjBeatAnalysisTimer();
   if (!songKey || !audioUrl) return;
-  djBeatAnalysisTimer = setTimeout(function waitForDjStart(){
+  djBeatAnalysisTimer = playbackTaskScope.timeout(function waitForDjStart(){
     djBeatAnalysisTimer = null;
     if (token !== djBeatMapToken || !djMode.active || djMode.songKey !== songKey || djBeatMapCache[songKey]) return;
     var startAnalysis = function(){
       if (token !== djBeatMapToken || !djMode.active || djMode.songKey !== songKey || djBeatMapCache[songKey]) return;
       if (djBeatMapBusy) {
-        djBeatAnalysisTimer = setTimeout(waitForDjStart, 900);
+        djBeatAnalysisTimer = playbackTaskScope.timeout(waitForDjStart, 900, 'dj-beat-analysis');
         return;
       }
       if (/^https?:\/\//i.test(audioUrl || '') && (durationSec <= 0 || durationSec > 3300)) {
@@ -8578,7 +8696,7 @@ function schedulePodcastDjAnalysis(songKey, audioUrl, token, durationSec) {
       });
     };
     scheduleAnalysisTask(startAnalysis, 900);
-  }, 900);
+  }, 900, 'dj-beat-analysis');
 }
 
 async function analyzePodcastDjIntroBeats(audioUrl, token, durationSec) {
@@ -12725,27 +12843,6 @@ function compactHomeCount(n) {
   if (n >= 10000) return Math.round(n / 10000) + '万';
   return n ? String(n) : '';
 }
-function loadListenStatsState() {
-  try {
-    var raw = localStorage.getItem(HOME_LISTEN_STATS_KEY);
-    if (!raw) return { history: [], songs: {}, artists: {}, updatedAt: 0 };
-    var data = JSON.parse(raw);
-    return {
-      history: Array.isArray(data.history) ? data.history.slice(0, 180) : [],
-      songs: data.songs && typeof data.songs === 'object' ? data.songs : {},
-      artists: data.artists && typeof data.artists === 'object' ? data.artists : {},
-      updatedAt: Number(data.updatedAt) || 0,
-    };
-  } catch (e) {
-    return { history: [], songs: {}, artists: {}, updatedAt: 0 };
-  }
-}
-function saveListenStatsState() {
-  try {
-    listenStatsState.updatedAt = Date.now();
-    localStorage.setItem(HOME_LISTEN_STATS_KEY, JSON.stringify(listenStatsState));
-  } catch (e) {}
-}
 function listenSongSnapshot(song) {
   song = song || {};
   return {
@@ -12764,113 +12861,25 @@ function listenSongSnapshot(song) {
   };
 }
 function beginListenSession(song, context) {
-  if (!song) return;
-  var snap = listenSongSnapshot(song);
-  if (!snap.key) return;
-  if (listenSession && listenSession.key !== snap.key) finalizeListenSession(false);
-  listenSession = {
-    key: snap.key,
-    song: snap,
-    context: context || activeRadioContext || null,
-    startedAt: Date.now(),
-    lastWallAt: Date.now(),
-    lastAudioTime: audio && isFinite(audio.currentTime) ? audio.currentTime : 0,
-    listenMs: 0,
-    maxProgress: 0,
-  };
+  return listenStatsController.begin(song, context);
 }
 function updateListenStatsTick(force) {
-  if (!audio || !audio.duration || audio.paused) return;
-  var song = currentCoverSong();
-  if (!song) return;
-  var key = queueItemKey(song);
-  if (!listenSession || listenSession.key !== key) beginListenSession(song, activeRadioContext);
-  if (!listenSession) return;
-  var now = Date.now();
-  var audioTime = isFinite(audio.currentTime) ? audio.currentTime : 0;
-  var deltaByAudio = Math.max(0, audioTime - (listenSession.lastAudioTime || 0)) * 1000;
-  var deltaByWall = Math.max(0, now - (listenSession.lastWallAt || now));
-  var delta = deltaByAudio > 0 ? Math.min(deltaByAudio, deltaByWall || deltaByAudio, 4200) : 0;
-  if (force && delta <= 0) delta = Math.min(deltaByWall, 1500);
-  if (delta > 0 && delta < 8000) listenSession.listenMs += delta;
-  listenSession.lastWallAt = now;
-  listenSession.lastAudioTime = audioTime;
-  listenSession.maxProgress = Math.max(listenSession.maxProgress || 0, audio.duration ? audioTime / audio.duration : 0);
+  return listenStatsController.tick(force);
 }
 function finalizeListenSession(completed) {
-  if (!listenSession) return;
-  updateListenStatsTick(true);
-  var session = listenSession;
-  listenSession = null;
-  var effective = completed || session.listenMs >= 45000 || session.maxProgress >= 0.5 || (!audio || !audio.duration ? session.listenMs >= 30000 : false);
-  if (!effective) return;
-  var now = Date.now();
-  var snap = session.song || {};
-  var record = {
-    key: session.key,
-    id: snap.id || '',
-    mid: snap.mid || '',
-    mediaMid: snap.mediaMid || '',
-    type: snap.type || 'song',
-    sourceKey: snap.sourceKey || '',
-    name: snap.name || '未知歌曲',
-    artist: snap.artist || '',
-    cover: snap.cover || '',
-    source: snap.source || '',
-    duration: snap.duration || 0,
-    playedAt: now,
-    listenMs: Math.round(session.listenMs),
-    completed: !!completed,
-    context: session.context || null,
-  };
-  listenStatsState.history = [record].concat((listenStatsState.history || []).filter(function(item){ return item && item.key !== record.key; })).slice(0, 180);
-  var songStat = listenStatsState.songs[record.key] || { key: record.key, id: record.id, mid: record.mid, name: record.name, artist: record.artist, cover: record.cover, source: record.source, sourceKey: record.sourceKey, duration: record.duration || 0, plays: 0, listenMs: 0, completed: 0, lastPlayedAt: 0 };
-  songStat.id = record.id || songStat.id || '';
-  songStat.mid = record.mid || songStat.mid || '';
-  songStat.sourceKey = record.sourceKey || songStat.sourceKey || '';
-  songStat.duration = record.duration || songStat.duration || 0;
-  songStat.name = record.name;
-  songStat.artist = record.artist;
-  songStat.cover = record.cover || songStat.cover || '';
-  songStat.source = record.source || songStat.source || '';
-  songStat.plays += 1;
-  songStat.listenMs += record.listenMs;
-  songStat.completed += completed ? 1 : 0;
-  songStat.lastPlayedAt = now;
-  listenStatsState.songs[record.key] = songStat;
-  String(record.artist || '').split(/\s*\/\s*|\s*,\s*|、|&/).forEach(function(name){
-    name = name.trim();
-    if (!name) return;
-    var artistStat = listenStatsState.artists[name] || { name: name, plays: 0, listenMs: 0, lastPlayedAt: 0 };
-    artistStat.plays += 1;
-    artistStat.listenMs += record.listenMs;
-    artistStat.lastPlayedAt = now;
-    listenStatsState.artists[name] = artistStat;
-  });
-  saveListenStatsState();
-  if (emptyHomeActive) renderHomeDiscover();
+  return listenStatsController.finalize(completed);
 }
 function mostPlayedSong() {
-  var list = Object.keys(listenStatsState.songs || {}).map(function(key){ return listenStatsState.songs[key]; });
-  list.sort(function(a, b){ return (b.plays - a.plays) || (b.listenMs - a.listenMs) || (b.lastPlayedAt - a.lastPlayedAt); });
-  return list[0] || null;
+  return listenStatsController.summary().topSong;
 }
 function topListenArtist() {
-  var list = Object.keys(listenStatsState.artists || {}).map(function(key){ return listenStatsState.artists[key]; });
-  list.sort(function(a, b){ return (b.plays - a.plays) || (b.listenMs - a.listenMs) || (b.lastPlayedAt - a.lastPlayedAt); });
-  return list[0] || null;
+  return listenStatsController.summary().topArtist;
 }
 function homeListenSummary() {
-  var recent = (listenStatsState.history || [])[0] || null;
-  var topSong = mostPlayedSong();
-  var topArtist = topListenArtist();
-  var totalPlays = Object.keys(listenStatsState.songs || {}).reduce(function(sum, key){ return sum + ((listenStatsState.songs[key] && listenStatsState.songs[key].plays) || 0); }, 0);
-  return { recent: recent, topSong: topSong, topArtist: topArtist, totalPlays: totalPlays };
+  return listenStatsController.summary();
 }
 function topListenSongs(limit) {
-  var list = Object.keys(listenStatsState.songs || {}).map(function(key){ return listenStatsState.songs[key]; });
-  list.sort(function(a, b){ return (b.plays - a.plays) || (b.listenMs - a.listenMs) || (b.lastPlayedAt - a.lastPlayedAt); });
-  return list.slice(0, limit || 8);
+  return listenStatsController.topSongs(limit);
 }
 function listenRecordToSong(record) {
   if (!record || !record.id) return null;
@@ -12888,29 +12897,7 @@ function listenRecordToSong(record) {
   };
 }
 function homePersonalRecommendations() {
-  var seen = {};
-  var out = [];
-  var history = (listenStatsState.history || []).slice(0, 12);
-  var topSongs = topListenSongs(10);
-  var topArtists = Object.keys(listenStatsState.artists || {}).map(function(key){ return listenStatsState.artists[key]; })
-    .sort(function(a, b){ return (b.plays - a.plays) || (b.listenMs - a.listenMs) || (b.lastPlayedAt - a.lastPlayedAt); })
-    .slice(0, 4)
-    .map(function(item){ return normalizeArtistNameForMatch(item.name); })
-    .filter(Boolean);
-  function push(song) {
-    song = song && cloneSong(song);
-    var key = queueItemKey(song);
-    if (!song || !key || seen[key]) return;
-    seen[key] = true;
-    out.push(song);
-  }
-  (homeDiscoverState.songs || []).slice().sort(function(a, b){
-    var as = MineradioModules.homeRecommendations.artistMatchScore(a && a.artist, topArtists);
-    var bs = MineradioModules.homeRecommendations.artistMatchScore(b && b.artist, topArtists);
-    return bs - as;
-  }).forEach(push);
-  topSongs.concat(history).forEach(function(record){ push(listenRecordToSong(record)); });
-  return out.slice(0, 10);
+  return listenStatsController.recommendations(homeDiscoverState.songs || []);
 }
 var homeNowClockTimer = null;
 var HOME_NOW_WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -13173,7 +13160,7 @@ function renderHomePlaylistPicker() {
   row.innerHTML = lists.map(function(pl, i){
     var cover = pl.cover ? coverUrlWithSize(pl.cover, 220) : '';
     var sub = pl.trackCount ? (pl.trackCount + ' 首') : 'YouTube Music';
-    return '<button class="home-pl-card" type="button" data-provider="' + escHtml(pl.provider || '') + '" onclick="openHomeUserPlaylist(' + i + ')" title="' + escHtml(pl.name || '') + '">' +
+    return '<button class="home-pl-card" type="button" data-provider="' + escHtml(pl.provider || '') + '" data-action="home-user-playlist" data-index="' + i + '" title="' + escHtml(pl.name || '') + '">' +
       '<div class="home-pl-cover' + (cover ? ' has-cover' : '') + '"' + (cover ? ' style="background-image:url(\'' + cssImageUrl(cover) + '\')"' : '') + '></div>' +
       '<div class="home-pl-name">' + escHtml(pl.name || '歌单') + '</div>' +
       '<div class="home-pl-sub">' + escHtml(sub) + '</div>' +
@@ -13186,7 +13173,8 @@ function renderHomeRecommendations() {
   if (!row) return;
   var recommendations = homePersonalRecommendations();
   homeRecommendationQueue = recommendations;
-  var hasHistory = !!((listenStatsState.history || []).length || Object.keys(listenStatsState.songs || {}).length);
+  var listenStats = listenStatsController.getState();
+  var hasHistory = !!((listenStats.history || []).length || Object.keys(listenStats.songs || {}).length);
   if (note) {
     if (recommendations.length) {
       note.textContent = hasHistory ? '根据最近和常听歌曲整理' : '先用今日推荐垫一组';
@@ -14063,10 +14051,10 @@ function renderArtistSongList(songs) {
     var cover = songCoverSrc(s, 80);
     var coverHtml = cover ? '<img class="artist-song-cover" src="' + escHtml(cover) + '" alt="" onerror="this.style.opacity=0.18">' : '<div class="artist-song-cover"></div>';
     var actionsHtml = '<div class="artist-song-actions">' +
-      '<button class="artist-song-action collect" type="button" title="收藏到歌单" aria-label="收藏到歌单" onclick="event.stopPropagation();collectArtistDetailSong(' + i + ')">' + artistCollectTrayIconSvg() + '</button>' +
-      '<button class="artist-song-action next" type="button" title="下一首播放" aria-label="下一首播放" onclick="event.stopPropagation();queueArtistDetailSongNext(' + i + ')">' + artistNextPlusIconSvg() + '</button>' +
+      '<button class="artist-song-action collect" type="button" title="收藏到歌单" aria-label="收藏到歌单" data-action="artist-collect" data-index="' + i + '" data-stop-propagation="true">' + artistCollectTrayIconSvg() + '</button>' +
+      '<button class="artist-song-action next" type="button" title="下一首播放" aria-label="下一首播放" data-action="artist-queue-next" data-index="' + i + '" data-stop-propagation="true">' + artistNextPlusIconSvg() + '</button>' +
     '</div>';
-    return '<div class="artist-song-item" onclick="playArtistDetailSong(' + i + ')">' +
+    return '<div class="artist-song-item" data-action="artist-play" data-index="' + i + '">' +
       '<div class="artist-song-rank">' + String(i + 1).padStart(2, '0') + '</div>' +
       coverHtml +
       '<div class="artist-song-main"><div class="artist-song-name">' + escHtml(s.name || '') + '</div>' +
@@ -14671,9 +14659,9 @@ function artistNextPlusIconSvg() {
 function songActionHtml(kind, source, index, song) {
   var liked = isSongLiked(song);
   if (kind === 'like') {
-    return '<button class="song-action-btn' + (liked ? ' liked' : '') + '" title="' + (liked ? '取消红心' : '红心喜欢') + '" onclick="event.stopPropagation();toggleLike' + source + '(' + index + ')">' + heartIconSvg() + '</button>';
+    return '<button class="song-action-btn' + (liked ? ' liked' : '') + '" title="' + (liked ? '取消红心' : '红心喜欢') + '" data-action="song-like" data-source="' + escHtml(source) + '" data-index="' + index + '" data-stop-propagation="true">' + heartIconSvg() + '</button>';
   }
-  return '<button class="song-action-btn" title="收藏到歌单" onclick="event.stopPropagation();collect' + source + '(' + index + ')">' + playlistPlusIconSvg() + '</button>';
+  return '<button class="song-action-btn" title="收藏到歌单" data-action="song-collect" data-source="' + escHtml(source) + '" data-index="' + index + '" data-stop-propagation="true">' + playlistPlusIconSvg() + '</button>';
 }
 function syncLikeStatusForSongs(songs) {
   if (!loginStatus.loggedIn || !songs || !songs.length) return;
@@ -14795,7 +14783,7 @@ function renderCollectModal() {
   }
   list.innerHTML = mine.map(function(pl){
     var thumb = pl.cover ? coverUrlWithSize(pl.cover, 80) : '';
-    return '<div class="collect-item" data-collect-pid="' + escHtml(String(pl.id || '')) + '" onclick="addCollectTargetToPlaylist(this.getAttribute(\'data-collect-pid\'))">' +
+    return '<div class="collect-item" data-collect-pid="' + escHtml(String(pl.id || '')) + '" data-playlist-id="' + escHtml(String(pl.id || '')) + '" data-action="collect-target-add">' +
       (thumb ? '<img src="' + thumb + '" alt="">' : '<div class="cover-placeholder"></div>') +
       '<div style="min-width:0"><div class="collect-title">' + escHtml(pl.name || '') + '</div><div class="collect-sub">' + (pl.trackCount || 0) + ' 首</div></div>' +
     '</div>';
@@ -15059,14 +15047,14 @@ function renderPodcastRadios(items, label) {
   }
   $results.innerHTML = podcastResults.map(function(p, i){
     return '<div class="search-result">' +
-      '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0" onclick="openPodcastPrograms(' + i + ')">' +
+      '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0" data-action="podcast-open" data-index="' + i + '">' +
         searchThumbHtml(p.cover) +
         '<div class="search-result-info">' +
           '<div class="search-result-title">' + escHtml(p.name || '') + '<span class="tag-podcast">Podcast</span></div>' +
           '<div class="search-result-meta">' + escHtml(podcastMetaText(p) || label || 'Podcast') + '</div>' +
         '</div>' +
       '</div>' +
-      '<button class="add-btn" title="Open" onclick="event.stopPropagation();openPodcastPrograms(' + i + ')">›</button>' +
+      '<button class="add-btn" title="Open" data-action="podcast-open" data-index="' + i + '" data-stop-propagation="true">›</button>' +
     '</div>';
   }).join('');
   $results.classList.add('show');
@@ -15116,26 +15104,26 @@ async function openPodcastPrograms(i) {
 function renderPodcastPrograms() {
   var radio = podcastCurrentRadio || {};
   if (!podcastPrograms.length) {
-    $results.innerHTML = '<div class="podcast-result-head"><button class="podcast-back-btn" onclick="event.stopPropagation();renderPodcastRadios(podcastResults)">‹</button><div class="search-result-info"><div class="search-result-title">' + escHtml(radio.name || 'Podcast') + '</div><div class="search-result-meta">No playable episodes</div></div></div>';
+    $results.innerHTML = '<div class="podcast-result-head"><button class="podcast-back-btn" data-action="podcast-back" data-stop-propagation="true">‹</button><div class="search-result-info"><div class="search-result-title">' + escHtml(radio.name || 'Podcast') + '</div><div class="search-result-meta">No playable episodes</div></div></div>';
     $results.classList.add('show');
     return;
   }
   $results.innerHTML =
     '<div class="podcast-result-head">' +
-      '<button class="podcast-back-btn" onclick="event.stopPropagation();renderPodcastRadios(podcastResults)">‹</button>' +
+      '<button class="podcast-back-btn" data-action="podcast-back" data-stop-propagation="true">‹</button>' +
       searchThumbHtml(radio.cover) +
       '<div class="search-result-info"><div class="search-result-title">' + escHtml(radio.name || 'Podcast') + '<span class="tag-podcast">Podcast</span></div><div class="search-result-meta">' + escHtml(radio.djName || (podcastPrograms.length + ' episodes')) + '</div></div>' +
     '</div>' +
     podcastPrograms.map(function(p, i){
       return '<div class="search-result">' +
-        '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0" onclick="playPodcastProgram(' + i + ')">' +
+        '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0" data-action="podcast-play" data-index="' + i + '">' +
           searchThumbHtml(p.cover) +
           '<div class="search-result-info">' +
             '<div class="search-result-title">' + escHtml(p.name || '') + '</div>' +
             '<div class="search-result-meta">' + escHtml(programMetaText(p)) + '</div>' +
           '</div>' +
         '</div>' +
-        '<button class="add-btn" title="下一首播放" onclick="event.stopPropagation();queuePodcastProgram(' + i + ')">+</button>' +
+        '<button class="add-btn" title="下一首播放" data-action="podcast-queue" data-index="' + i + '" data-stop-propagation="true">+</button>' +
       '</div>';
     }).join('');
   $results.classList.add('show');
@@ -15238,7 +15226,7 @@ function searchResultMetaHtml(song, index) {
   if (song.album) bits.push(song.album);
   var tail = bits.length ? (' · ' + escHtml(bits.join('  ·  '))) : '';
   if (!artist) return escHtml(searchResultMetaText(song));
-  return '<button class="search-artist-link" type="button" onclick="event.stopPropagation();openSearchResultArtist(' + index + ')">' + escHtml(artist) + '</button>' + tail;
+  return '<button class="search-artist-link" type="button" data-action="search-artist" data-index="' + index + '" data-stop-propagation="true">' + escHtml(artist) + '</button>' + tail;
 }
 function openSearchResultArtist(index) {
   var song = playlist && playlist[index];
@@ -15376,16 +15364,16 @@ function renderSongSearchResults(songs) {
       ? '<img src="' + thumb + '" alt="" loading="lazy" onerror="this.style.opacity=0.2">'
       : '<div style="width:40px;height:40px;border-radius:6px;background:rgba(255,255,255,0.06);flex-shrink:0"></div>';
     return '<div class="search-result ' + sourceClass + '">' +
-      '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0" onclick="playSearchResult(' + i + ')">' +
+      '<div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0" data-action="search-play" data-index="' + i + '">' +
         imgTag +
         '<div class="search-result-info">' +
           '<div class="search-result-title">' + escHtml(s.name) + sourceTag + vipTag + '</div>' +
           '<div class="search-result-meta">' + searchResultMetaHtml(s, i) + '</div>' +
         '</div>' +
       '</div>' +
-      '<button class="song-action-btn' + (isSongLiked(s) ? ' liked' : '') + '" data-like-index="' + i + '" title="' + (isSongLiked(s) ? '取消红心' : '红心喜欢') + '" onclick="event.stopPropagation();toggleLikeSearchResult(' + i + ')">' + heartIconSvg() + '</button>' +
-      '<button class="song-action-btn" title="收藏到歌单" onclick="event.stopPropagation();collectSearchResult(' + i + ')">' + playlistPlusIconSvg() + '</button>' +
-      '<button class="add-btn" title="下一首播放" onclick="event.stopPropagation();queueSearchResult(' + i + ')">+</button>' +
+      '<button class="song-action-btn' + (isSongLiked(s) ? ' liked' : '') + '" data-like-index="' + i + '" title="' + (isSongLiked(s) ? '取消红心' : '红心喜欢') + '" data-action="search-like" data-index="' + i + '" data-stop-propagation="true">' + heartIconSvg() + '</button>' +
+      '<button class="song-action-btn" title="收藏到歌单" data-action="search-collect" data-index="' + i + '" data-stop-propagation="true">' + playlistPlusIconSvg() + '</button>' +
+      '<button class="add-btn" title="下一首播放" data-action="search-queue" data-index="' + i + '" data-stop-propagation="true">+</button>' +
     '</div>';
   }).join('');
   $results.classList.add('show');
@@ -15901,6 +15889,7 @@ function playSearchResult(i) {
   setHomeControlsLocked(false);
   var seedState = MineradioModules.queueController.createSearchSeedQueue(song, cloneSong);
   var seedSong = seedState.seedSong;
+  resetRadioQueue();
   playQueue = seedState.queue;
   currentIdx = seedState.currentIdx;
   radioSeedId = seedState.radioSeedId || '';
@@ -16063,6 +16052,10 @@ function handlePlaybackUnavailable(song, data) {
   var provider = playbackLoginProvider(song);
   var restriction = (data && data.restriction) || {};
   var category = (data && data.reason) || restriction.category || '';
+  presentPlaybackFailure('source-unavailable', new Error((data && (data.message || data.reason)) || '音源不可用'), {
+    category: category,
+    restricted: !!(data && data.restriction),
+  });
   showToast(playbackRestrictionMessage(song, data));
   if (category === 'login_required') {
     setTimeout(function(){
@@ -16106,6 +16099,7 @@ function safePlaybackStep(label, fn) {
     return fn();
   } catch (err) {
     console.warn('[PlaybackSetupStep]', label, err);
+    playbackObservability.fail('setup-' + label, err, { recoverable: true }, trackSwitchToken);
     return null;
   }
 }
@@ -16142,14 +16136,17 @@ async function playQueueAt(idx, opts) {
   if (idx < 0 || idx >= playQueue.length) return;
   markRenderInteraction('track-switch', 1500);
   var playPhase = 'start';
-  function markPlayPhase(name) { playPhase = name; }
+  function markPlayPhase(name, details) {
+    playPhase = name;
+    playbackObservability.mark(name, details || null, trackSwitchToken);
+  }
   try {
   markPlayPhase('session-finalize');
   safePlaybackStep('session-finalize', function(){ finalizeListenSession(false); });
   homeForcedOpen = false;
   if (!opts.preserveHomeState) homeSuppressed = false;
   currentIdx = idx;
-  trackSwitchToken++;
+  var playbackSession = beginPlaybackSession({ index: idx, song: playQueue[idx] });
   markPlayPhase('cancel-previous-track');
   cancelBeatAnalysisTimer();
   cancelBeatPrefetchTimer();
@@ -16161,6 +16158,7 @@ async function playQueueAt(idx, opts) {
   markPlayPhase('track-setup');
   var song = safePlaybackStep('hydrate-song', function(){ return hydrateCustomCover(playQueue[idx]); }) || playQueue[idx];
   playQueue[idx] = song;
+  markPlayPhase('track-selected', { index: idx, source: song && (song.source || song.provider || '') });
   var playbackContext = opts.context || (song && song.radioContext) || null;
   activeRadioContext = playbackContext || null;
   safeRenderQueuePanel('play-queue-at-switch', { scrollCurrent: miniQueueOpen });
@@ -16194,7 +16192,7 @@ async function playQueueAt(idx, opts) {
   // fetchLyric 自带 trackSwitchToken 守卫，切歌/播放失败时旧请求会被忽略，不会串轨。
   // 播客不走此路（无逐行歌词）。
   var lyricReadyPromise = (song && song.type !== 'podcast')
-    ? safePlaybackStep('lyric-prefetch', function(){ return fetchLyric(song, token); })
+    ? safePlaybackStep('lyric-prefetch', function(){ return fetchLyric(song, token, playbackSession.signal); })
     : null;
 
   markPlayPhase('cover-load');
@@ -16221,13 +16219,25 @@ async function playQueueAt(idx, opts) {
     var requestedQuality = normalizePlaybackQuality(opts.qualityOverride || playbackQuality);
     if (requestedQuality === 'jymaster' && !hasProviderSvip('youtube', loginStatus)) requestedQuality = 'hires';
     var qualityParam = '&quality=' + encodeURIComponent(requestedQuality);
-    var data = await apiJson('/api/song/url?id=' + song.id + qualityParam);
+    var playbackTraceId = playbackSession.id || '';
+    var sourceRequestOptions = { signal: playbackSession.signal };
+    if (playbackTraceId) sourceRequestOptions.headers = { 'X-Mineradio-Playback-Session': playbackTraceId };
+    var data = await apiJson('/api/song/url?id=' + song.id + qualityParam + (playbackTraceId ? '&ps=' + encodeURIComponent(playbackTraceId) : ''), sourceRequestOptions);
     if (token !== trackSwitchToken) return;
     if (!data.url) {
+      playbackObservability.fail('source-url', new Error(data.message || data.reason || '音源地址为空'), {
+        reason: data.reason || '',
+        restricted: !!data.restriction,
+      }, token);
       if (await tryAutoPlaybackFallback(song, data, idx, token, opts)) return;
       handlePlaybackUnavailable(song, data);
       return;
     }
+    markPlayPhase('source-ready', {
+      quality: requestedQuality,
+      trial: !!data.trial,
+      provider: data.provider || song.source || song.provider || '',
+    });
     if (data.trial) {
       var txt;
       if (data.loggedIn && data.vipLevel === 'svip') txt = '此歌曲需要单曲、专辑购买或更高权限';
@@ -16250,12 +16260,15 @@ async function playQueueAt(idx, opts) {
       audio.pause();
     }
     bindPlaybackProgressEvents(audio);
+    playbackObservability.bindAudio(audio, function(){ return trackSwitchToken; });
     applyVolumeToAudio();
-    var proxyAudioUrl = '/api/audio?url=' + encodeURIComponent(data.url);
+    var proxyAudioUrl = '/api/audio?url=' + encodeURIComponent(data.url) + (playbackTraceId ? '&ps=' + encodeURIComponent(playbackTraceId) : '');
     audio.src = proxyAudioUrl;
+    markPlayPhase('audio-src-set', { proxied: true });
     updatePlaybackProgressUi();
     audio.onended = function(){
       if (token !== trackSwitchToken) return;
+      playbackObservability.mark('audio-ended-handler', null, token);
       finalizeListenSession(true);
       if (playMode === 'single') setTimeout(function(){ playQueueAt(currentIdx, { autoRepeat: true }); }, 0);
       else setTimeout(nextTrack, 0);
@@ -16319,6 +16332,7 @@ async function playQueueAt(idx, opts) {
     }
     } catch (visualErr) {
       console.warn('[PlaybackVisualPrep]', song && song.name, visualErr);
+      playbackObservability.fail('visual-prep', visualErr, { recoverable: true }, token);
       currentBeatMap = null;
       beatMapNextIdx = 0;
       safePlaybackStep('visual-prep-hide-chip', hideBeatChip);
@@ -16333,6 +16347,9 @@ async function playQueueAt(idx, opts) {
     markPlayPhase('audio-start');
     var playbackStarted = await playAudio({ silent: false });
     if (!playbackStarted) {
+      playbackObservability.mark('audio-start-not-ready', {
+        autoplayBlocked: lastPlayFailureWasAutoplayPolicy(),
+      }, token);
       forcePlaybackControlsInteractive();
       if (lastPlayFailureWasAutoplayPolicy()) {
         // 真正的自动播放策略拦截：保留点击播放引导
@@ -16345,6 +16362,7 @@ async function playQueueAt(idx, opts) {
         skipFailedQueueItem(idx, token, '当前音源加载失败，正在尝试队列里的下一首。');
         return;
       }
+      presentPlaybackFailure('audio-start', lastAudioPlayError || new Error('音源加载失败'), { manual: !!opts.manual });
       showToast('音源加载失败，请重试或换一首');
       return;
     }
@@ -16364,29 +16382,33 @@ async function playQueueAt(idx, opts) {
     // 预取下一首歌词，切歌即时出词（best-effort；延后 1.2s 避免抢占当前歌加载/解码资源）。
     safePlaybackStep('prefetch-next-lyric', function(){
       var nextSong = playQueue[idx + 1];
-      if (nextSong) setTimeout(function(){ prefetchLyricForSong(nextSong); }, 1200);
+      if (nextSong) setTimeout(function(){ prefetchLyricForSong(nextSong, playbackSession.signal); }, 1200);
     });
     safeRenderQueuePanel('play-queue-at');
     scheduleShelfRebuild('play-queue-at', true);
     safePlaybackStep('shelf-preview-suppress-end', suppressShelfPreviewForPlaybackSwitch);
   } catch (err) {
     console.error('Play failed:', { phase: playPhase, error: err }, err);
+    playbackObservability.fail(playPhase, err, { index: idx, songId: song && song.id || '' }, token);
     hideLoading();
     forcePlaybackControlsInteractive();
     if (!isPlaybackRecursionError(err) && token === trackSwitchToken && !opts.manual && playQueue.length > 1) {
       skipFailedQueueItem(idx, token, '当前歌曲加载失败，正在尝试队列里的下一首。');
       return;
     }
+    presentPlaybackFailure(playPhase, err, { index: idx, manual: !!opts.manual });
     showToast(playbackFailureToastText(err));
   }
   } catch (setupErr) {
     console.error('Play setup failed:', { phase: playPhase, error: setupErr }, setupErr);
+    playbackObservability.fail(playPhase, setupErr, { index: idx }, typeof token === 'undefined' ? trackSwitchToken : token);
     hideLoading();
     forcePlaybackControlsInteractive();
     if (!isPlaybackRecursionError(setupErr) && typeof token !== 'undefined' && token === trackSwitchToken && !opts.manual && playQueue.length > 1) {
       skipFailedQueueItem(idx, token, '当前歌曲切换失败，正在尝试队列里的下一首。');
       return;
     }
+    presentPlaybackFailure(playPhase, setupErr, { index: idx, manual: !!opts.manual });
     showToast(playbackFailureToastText(setupErr));
   }
 }
@@ -16394,6 +16416,7 @@ async function attemptAudioPlay(opts) {
   opts = opts || {};
   try {
       if (!audio) return false;
+      playbackObservability.mark('audio-play-request', { manual: !!opts.manual }, trackSwitchToken);
       if (!audioReady) initAudio();
       if (opts.fade !== false) preparePlaybackFadeIn();
       if (opts.manual) {
@@ -16411,10 +16434,12 @@ async function attemptAudioPlay(opts) {
     else restorePlaybackGain();
     forcePlaybackControlsInteractive();
     hideLoading();
+    playbackObservability.mark('audio-play-resolved', { manual: !!opts.manual }, trackSwitchToken);
     return true;
   } catch (err) {
     console.warn('Audio play blocked:', err && (err.name || ''), err && (err.message || err));
     lastAudioPlayError = err || null;
+    playbackObservability.fail('audio-play', err, { manual: !!opts.manual }, trackSwitchToken);
     restorePlaybackGain();
     playing = false; setPlayIcon(false);
     hideLoading();
@@ -16423,6 +16448,7 @@ async function attemptAudioPlay(opts) {
       if (err && err.name === 'NotAllowedError') {
         showToast('播放被系统拦截, 请点击播放按钮');
       } else {
+        if (opts.manual) presentPlaybackFailure('audio-play', err, { manual: true });
         showToast(opts.manual ? '音源加载失败, 请重试或换一首' : '音源加载失败');
       }
     }
@@ -16476,69 +16502,43 @@ function setPlayIcon(p) {
     : '<path d="M8 5v14l11-7z"/>';
 }
 var radioAutoplayOn = true;      // 电台接续：队列见底时自动续推荐（默认开）
-var radioFetching = false;
 var radioSeedId = '';
-var radioPrimeSerial = 0;
-function scheduleRadioPrimeRetry(song, serial, attempt) {
-  attempt = Number(attempt) || 0;
-  if (attempt >= 3 || !song) return;
-  var delay = [700, 1800, 3600][attempt] || 3600;
-  setTimeout(function(){
-    if (serial !== radioPrimeSerial) return;
-    if (findQueueSeedIndex(song) < 0) return;
-    if (queueHasRecommendationAfterSeed(song)) return;
-    primeQueueWithSeedRadio(song, attempt + 1);
-  }, delay);
+var radioQueueController = null;
+function getRadioQueueController() {
+  if (radioQueueController) return radioQueueController;
+  radioQueueController = MineradioModules.radioQueue.create({
+    isEnabled: function(){ return radioAutoplayOn; },
+    apiJson: apiJson,
+    getSignal: function(){ return playbackSessionManager.currentSignal(); },
+    songProviderKey: songProviderKey,
+    isUsefulRadioSong: isUsefulRadioSong,
+    findSeedIndex: findQueueSeedIndex,
+    hasRecommendationAfterSeed: queueHasRecommendationAfterSeed,
+    getCurrentIndex: function(){ return currentIdx; },
+    getQueueLength: function(){ return playQueue.length; },
+    applyRecommendations: applyRadioRecommendations,
+    onError: function(error, phase){ console.warn('[Radio] ' + phase + ' failed:', error && error.message || error); }
+  });
+  return radioQueueController;
+}
+function resetRadioQueue() {
+  radioSeedId = '';
+  getRadioQueueController().reset();
 }
 function isUsefulRadioSong(song) {
   return MineradioModules.queueState.isUsefulRadioSong(song);
 }
 async function fetchRadioSongsForSeed(song) {
-  if (!radioAutoplayOn || !song) return [];
-  if (song.type === 'podcast' || song.type === 'local' || song.source === 'local') return [];
-  var seed = songProviderKey(song) === 'youtube' ? (song.id || '') : '';
-  var title = song.name || '';
-  var artist = song.artist || '';
-  if (!seed && !title) return [];
-  var params = [];
-  if (seed) params.push('id=' + encodeURIComponent(seed));
-  params.push('title=' + encodeURIComponent(title));
-  params.push('artist=' + encodeURIComponent(artist));
-  params.push('limit=18');
-  var r = await apiJson('/api/radio?' + params.join('&'));
-  return ((r && r.songs) || []).filter(isUsefulRadioSong);
+  return getRadioQueueController().fetchForSeed(song);
 }
 async function primeQueueWithSeedRadio(song, attempt) {
-  attempt = Number(attempt) || 0;
-  var serial = ++radioPrimeSerial;
-  try {
-    var recs = await fetchRadioSongsForSeed(song);
-    if (serial !== radioPrimeSerial) return;
-    var added = applyRadioRecommendations(song, recs, { replaceTail: true, requireCurrent: false, reason: 'radio-prime' });
-    if (!added) scheduleRadioPrimeRetry(song, serial, attempt);
-  } catch (e) {
-    console.warn('[Radio] prime failed:', e && e.message);
-    scheduleRadioPrimeRetry(song, serial, attempt);
-  }
+  return getRadioQueueController().prime(song, attempt);
 }
 // 当前歌是队列最后一首且是 YTM 歌时，后台拉「接下来」推荐去重追加，实现无限接续
 async function maybeExtendQueueWithRadio(song) {
-  if (!radioAutoplayOn || radioFetching || !song) return;
-  if (songProviderKey(song) !== 'youtube') return;   // 目前只对 YouTube Music 歌曲做电台接续
-  if (song.type === 'podcast' || song.type === 'local' || song.source === 'local') return;
-  if (currentIdx < playQueue.length - 1) return;      // 后面还有歌，暂不需要
-  var seed = song.id;
-  if (!seed || radioSeedId === seed) return;          // 同一颗种子不重复拉
-  radioFetching = true;
-  try {
-    var recs = await fetchRadioSongsForSeed(song);
-    var added = applyRadioRecommendations(song, recs, { replaceTail: false, requireCurrent: true, reason: 'radio-extend' });
-    if (added) radioSeedId = seed;
-  } catch (e) {
-    console.warn('[Radio] extend failed:', e && e.message);
-  } finally {
-    radioFetching = false;
-  }
+  var added = await getRadioQueueController().extend(song);
+  if (added && song && song.id) radioSeedId = song.id;
+  return added;
 }
 function nextTrack() {
   if (!playQueue.length) return;
@@ -16565,6 +16565,8 @@ function shuffleQueue() {
   safeShelfRebuild('shuffle-queue');
 }
 function clearQueue() {
+  cancelPlaybackSession();
+  resetRadioQueue();
   playQueue = []; currentIdx = -1;
   safeRenderQueuePanel('clear-queue');
   safeShelfRebuild('clear-queue');
@@ -16852,75 +16854,8 @@ function clearPlayerControlFocusState(reason) {
 // ============================================================
 //  歌词
 // ============================================================
-// 歌词预取缓存：key = provider:id -> 后端原始响应(含 yrc/lyric)。播当前歌时顺手预取下一首，
-// 切歌即时出词。带上限防膨胀；歌词内容不变，可长期缓存。
-var lyricResponseCache = new Map();
-var LYRIC_CACHE_MAX = 40;
 // 播放前「短封顶等待歌词就绪」的上限(ms)：快源(网易/缓存)到齐再播，慢源(lrclib)超时先播后补。
 var LYRIC_START_WAIT_MS = 1200;
-function lyricCacheKey(song) {
-  if (!song) return '';
-  var provider = songProviderKey(song);
-  var id = song.id || '';
-  return id ? (provider + ':' + id) : '';
-}
-function lyricEndpointForSong(song, songOrId) {
-  var songId = song ? song.id : songOrId;
-  var lq = '/api/lyric?id=' + encodeURIComponent(songId);
-  if (song) {
-    // 传歌名/歌手/专辑/时长(秒)给后端 LrcLib 匹配逐行时间轴歌词
-    if (song.name) lq += '&name=' + encodeURIComponent(song.name);
-    if (song.artist) lq += '&artist=' + encodeURIComponent(song.artist);
-    if (song.album) lq += '&album=' + encodeURIComponent(song.album);
-    if (song.duration) lq += '&duration=' + encodeURIComponent(Math.round(Number(song.duration) / 1000));
-  }
-  return lq;
-}
-function cacheLyricResponse(song, r) {
-  var key = lyricCacheKey(song);
-  // 只缓存“真有歌词内容”的响应：空词多半是源瞬时失败/未命中，缓存它会让整会话都不再重试。
-  if (!key || !r || !(r.lyric || r.yrc)) return;
-  lyricResponseCache.set(key, r);
-  if (lyricResponseCache.size > LYRIC_CACHE_MAX) lyricResponseCache.delete(lyricResponseCache.keys().next().value);
-}
-// 预取：不碰 UI、不涉及 token，只把即将播放的歌的歌词提前拉进缓存。失败静默。
-async function prefetchLyricForSong(song) {
-  try {
-    if (!song || song.type === 'podcast') return;
-    var key = lyricCacheKey(song);
-    if (!key || lyricResponseCache.has(key)) return;
-    var r = await apiJson(lyricEndpointForSong(song, song));
-    cacheLyricResponse(song, r);
-  } catch (e) {}
-}
-async function fetchLyric(songOrId, token) {
-  try {
-    var song = (songOrId && typeof songOrId === 'object') ? songOrId : null;
-    var cacheKey = song ? lyricCacheKey(song) : '';
-    var r = (cacheKey && lyricResponseCache.has(cacheKey)) ? lyricResponseCache.get(cacheKey) : null;
-    if (!r) {
-      r = await apiJson(lyricEndpointForSong(song, songOrId));
-      if (token !== trackSwitchToken) return;
-      cacheLyricResponse(song, r);
-    }
-    if (token !== trackSwitchToken) return;
-    var nativeLines = parseYrcText(r.yrc || '');
-    var lrcLines = parseLyricText(r.lyric || '');
-    var hasNativeKaraoke = nativeLines.some(function(line){ return line.words && line.words.length; });
-    var timingSource = hasNativeKaraoke ? 'yrc-word' : (nativeLines.length ? 'yrc-line' : (lrcLines.length ? 'lrc-line' : 'fallback'));
-    var lines = withLyricFallback(nativeLines.length ? nativeLines : lrcLines);
-    if (lines.length && lines[0].fallback) timingSource = 'fallback';
-    setOriginalLyricsState(lines, hasNativeKaraoke, timingSource);
-    applyPreferredLyricsForCurrent(true);
-    resetLyricTranslationForNewSong();
-  } catch (e) {
-    if (token !== trackSwitchToken) return;
-    var fallbackLines = withLyricFallback([]);
-    setOriginalLyricsState(fallbackLines, false, 'fallback');
-    applyPreferredLyricsForCurrent(true);
-    resetLyricTranslationForNewSong();
-  }
-}
 function currentLyricFallbackText() {
   var song = currentLyricSong() || {};
   var title = (song.name || document.getElementById('thumb-title').textContent || '').trim();
@@ -16952,125 +16887,80 @@ function parseYrcText(text) {
   return MineradioModules.lyricsState.parseYrcText(text);
 }
 
+var lyricsLoader = createLyricsLoader({
+  apiJson: apiJson,
+  songProviderKey: songProviderKey,
+  isCurrentToken: function(token) { return token === trackSwitchToken; },
+  parseYrcText: parseYrcText,
+  parseLyricText: parseLyricText,
+  withLyricFallback: withLyricFallback,
+  setOriginalLyricsState: setOriginalLyricsState,
+  applyPreferredLyricsForCurrent: applyPreferredLyricsForCurrent,
+  resetLyricTranslationForNewSong: resetLyricTranslationForNewSong
+});
+
+function prefetchLyricForSong(song, signal) {
+  return lyricsLoader.prefetch(song, signal);
+}
+
+function fetchLyric(songOrId, token, signal) {
+  return lyricsLoader.fetch(songOrId, token, signal);
+}
+
 function renderLyrics() {
   renderFullLyricsPanel(false);
   // v8: 舞台歌词渲染由 stageLyrics 在每帧 tickLyricsParticles 里推动
   clearStageLyrics();
 }
 
-function fullLyricsCurrentTime() {
-  return audio && isFinite(audio.currentTime) ? Number(audio.currentTime) : 0;
-}
-
-function fullLyricsCurrentMeta() {
-  var song = currentLyricSong();
-  song = song || {};
-  return {
-    title: song.name || song.title || '歌词',
-    artist: song.artist || song.ar || song.author || ''
-  };
-}
-
-function buildFullLyricsPanelState() {
-  var meta = fullLyricsCurrentMeta();
-  return MineradioModules.fullLyricsView.buildFullLyricsViewState({
-    lines: lyricsLines,
-    currentTime: fullLyricsCurrentTime(),
-    visible: fullLyricsVisible,
-    title: meta.title,
-    artist: meta.artist,
-    timingSource: lyricsTimingSource
-  });
-}
-
-function bindFullLyricsListEvents(list) {
-  if (!list || list._mineradioFullLyricsBound) return;
-  list._mineradioFullLyricsBound = true;
-  list.addEventListener('scroll', function() {
-    if (fullLyricsProgrammaticScroll) return;
-    fullLyricsUserScrollUntil = Date.now() + 4500;
-  }, { passive: true });
-  list.addEventListener('click', function(e) {
-    var row = e.target && e.target.closest ? e.target.closest('.full-lyric-line') : null;
-    if (!row || !list.contains(row)) return;
-    seekFullLyricLine(parseInt(row.getAttribute('data-lyric-index') || '-1', 10));
-  });
-}
-
-function updateFullLyricsButton() {
-  var btn = document.querySelector('.lyrics-toggle-btn');
-  if (!btn) return;
-  btn.classList.toggle('active', !!fullLyricsVisible);
-  btn.setAttribute('aria-pressed', fullLyricsVisible ? 'true' : 'false');
-  btn.title = fullLyricsVisible ? '关闭全文歌词' : '全文歌词';
-}
+var fullLyricsController = createFullLyricsController({
+  fullLyricsView: MineradioModules.fullLyricsView,
+  currentLyricSong: currentLyricSong,
+  escHtml: escHtml,
+  showToast: showToast,
+  getState: function() {
+    return {
+      audio: audio,
+      lyricsLines: lyricsLines,
+      lyricsTimingSource: lyricsTimingSource,
+      lyricsVisible: lyricsVisible,
+      fullLyricsVisible: fullLyricsVisible,
+      fullLyricsActiveIndex: fullLyricsActiveIndex,
+      fullLyricsUserScrollUntil: fullLyricsUserScrollUntil,
+      fullLyricsProgrammaticScroll: fullLyricsProgrammaticScroll
+    };
+  },
+  setState: function(next) {
+    if (Object.prototype.hasOwnProperty.call(next, 'lyricsVisible')) lyricsVisible = !!next.lyricsVisible;
+    if (Object.prototype.hasOwnProperty.call(next, 'fullLyricsVisible')) fullLyricsVisible = !!next.fullLyricsVisible;
+    if (Object.prototype.hasOwnProperty.call(next, 'fullLyricsActiveIndex')) fullLyricsActiveIndex = Number(next.fullLyricsActiveIndex);
+    if (Object.prototype.hasOwnProperty.call(next, 'fullLyricsUserScrollUntil')) fullLyricsUserScrollUntil = Number(next.fullLyricsUserScrollUntil) || 0;
+    if (Object.prototype.hasOwnProperty.call(next, 'fullLyricsProgrammaticScroll')) fullLyricsProgrammaticScroll = !!next.fullLyricsProgrammaticScroll;
+  }
+});
 
 function renderFullLyricsPanel(forceScroll) {
-  var panel = document.getElementById('full-lyrics-panel');
-  var list = document.getElementById('full-lyrics-list');
-  if (!panel || !list || !MineradioModules.fullLyricsView) return;
-  bindFullLyricsListEvents(list);
-  var state = buildFullLyricsPanelState();
-  var title = document.getElementById('full-lyrics-title');
-  var artist = document.getElementById('full-lyrics-artist');
-  if (title) title.textContent = state.title || '歌词';
-  if (artist) artist.textContent = state.artist || '';
-  panel.classList.toggle('show', !!fullLyricsVisible);
-  panel.setAttribute('aria-hidden', fullLyricsVisible ? 'false' : 'true');
-  list.innerHTML = MineradioModules.fullLyricsView.renderFullLyricsHtml(state, { escHtml: escHtml });
-  fullLyricsActiveIndex = -9999;
-  syncFullLyricsActiveLine(forceScroll);
-  updateFullLyricsButton();
+  return fullLyricsController.render(forceScroll);
 }
 
 function syncFullLyricsActiveLine(forceScroll) {
-  if (!fullLyricsVisible || !MineradioModules.fullLyricsView) return;
-  var list = document.getElementById('full-lyrics-list');
-  if (!list) return;
-  var state = buildFullLyricsPanelState();
-  if (state.activeIndex === fullLyricsActiveIndex && !forceScroll) return;
-  fullLyricsActiveIndex = state.activeIndex;
-  var rows = list.querySelectorAll('.full-lyric-line');
-  var activeRow = null;
-  rows.forEach(function(row) {
-    var index = parseInt(row.getAttribute('data-lyric-index') || '-1', 10);
-    var active = index === state.activeIndex;
-    row.classList.toggle('active', active);
-    row.classList.toggle('passed', state.activeIndex >= 0 && index < state.activeIndex);
-    if (active) activeRow = row;
-  });
-  if (activeRow && (forceScroll || Date.now() > fullLyricsUserScrollUntil)) {
-    fullLyricsProgrammaticScroll = true;
-    activeRow.scrollIntoView({ block: 'center', behavior: forceScroll ? 'auto' : 'smooth' });
-    setTimeout(function(){ fullLyricsProgrammaticScroll = false; }, forceScroll ? 180 : 900);
-  }
+  return fullLyricsController.syncActiveLine(forceScroll);
 }
 
 function seekFullLyricLine(index) {
-  if (!audio || !Array.isArray(lyricsLines) || index < 0 || !lyricsLines[index]) return;
-  var t = Number(lyricsLines[index].t);
-  if (!isFinite(t)) return;
-  audio.currentTime = Math.max(0, t);
-  fullLyricsUserScrollUntil = 0;
-  syncFullLyricsActiveLine(true);
+  return fullLyricsController.seekLine(index);
 }
 
 function toggleFullLyrics(force) {
-  if (force === false) fullLyricsVisible = false;
-  else if (force === true) fullLyricsVisible = true;
-  else fullLyricsVisible = !fullLyricsVisible;
-  lyricsVisible = fullLyricsVisible;
-  renderFullLyricsPanel(true);
-  showToast(fullLyricsVisible ? '全文歌词已打开' : '全文歌词已关闭');
+  return fullLyricsController.toggle(force);
 }
 
 function toggleLyricsPanel(force) {
-  toggleFullLyrics(force);
+  return toggleFullLyrics(force);
 }
+
 function updateLyricsHighlight() {
-  if (fullLyricsVisible) {
-    syncFullLyricsActiveLine(false);
-  }
+  return fullLyricsController.updateHighlight();
 }
 
 // ============================================================
@@ -17295,11 +17185,11 @@ function renderMiniQueuePanel(opts) {
   $list.innerHTML = playQueue.map(function(song, i){
     var thumb = songCoverSrc(song, 60);
     var imgTag = thumb ? '<img src="' + thumb + '" alt="" loading="lazy" decoding="async" onerror="this.style.opacity=0.2">' : '<div class="mini-queue-cover"></div>';
-    return '<div class="mini-queue-item' + (i === currentIdx ? ' now' : '') + '" onclick="playQueueAt(' + i + ')">' +
+    return '<div class="mini-queue-item' + (i === currentIdx ? ' now' : '') + '" data-action="queue-play" data-index="' + i + '">' +
       imgTag +
       '<div class="mini-queue-info"><div class="mini-queue-name">' + escHtml(song.name) + '</div><div class="mini-queue-sub">' + escHtml(song.artist || '') + '</div></div>' +
-      '<button class="mini-queue-remove mini-queue-next" onclick="event.stopPropagation();queueIndexNext(' + i + ')" title="下一首播放">下</button>' +
-      '<button class="mini-queue-remove" onclick="event.stopPropagation();removeFromQueue(' + i + ')" title="移除">×</button>' +
+      '<button class="mini-queue-remove mini-queue-next" data-action="queue-next" data-index="' + i + '" data-stop-propagation="true" title="下一首播放">下</button>' +
+      '<button class="mini-queue-remove" data-action="queue-remove" data-index="' + i + '" data-stop-propagation="true" title="移除">×</button>' +
     '</div>';
   }).join('');
   if (opts.animate || opts.scrollCurrent) {
@@ -17352,6 +17242,7 @@ async function refreshUserPlaylists(force) {
     renderMyPodcastCollections({ animate: cachedAnimate });
     return;
   }
+  if (refreshUserPlaylists.request) return refreshUserPlaylists.request;
   var $pl = document.getElementById('pl-list');
   if ($pl) {
     $pl.innerHTML = miniQueueSkeleton();
@@ -17359,11 +17250,13 @@ async function refreshUserPlaylists(force) {
   }
   var $pod = document.getElementById('podcast-list');
   if ($pod) $pod.innerHTML = miniQueueSkeleton();
-  try {
-    var result = await Promise.all([
+  var request = Promise.all([
       loginStatus.loggedIn ? apiJson('/api/user/playlists') : Promise.resolve({ playlists: [] }),
       loginStatus.loggedIn ? apiJson('/api/podcast/my') : Promise.resolve({ collections: [], loggedIn: false })
     ]);
+  refreshUserPlaylists.request = request;
+  try {
+    var result = await request;
     var youtubeLists = (result[0].playlists || []).map(function(pl){ pl.provider = 'youtube'; pl.source = 'youtube'; return pl; });
     userPlaylists = youtubeLists;
     myPodcastCollections = result[1].collections || [];
@@ -17373,6 +17266,9 @@ async function refreshUserPlaylists(force) {
     if (emptyHomeActive) renderHomeDiscover();
     scheduleShelfRebuild('refresh-user-playlists', true);
   } catch (e) { console.warn(e); }
+  finally {
+    if (refreshUserPlaylists.request === request) refreshUserPlaylists.request = null;
+  }
 }
 var playlistPanelDetailState = { key: '', loading: false, playlist: null, tracks: [], token: 0, renderLimit: PLAYLIST_DETAIL_INITIAL_RENDER };
 function playlistPanelKey(provider, id) {
@@ -17891,8 +17787,8 @@ function handleFiles(files) {
     finalizeListenSession(false);
     var url = URL.createObjectURL(audioFile);
     var localTitle = audioFile.name.replace(/\.[^.]+$/, '');
-    trackSwitchToken++;
-    var token = trackSwitchToken;
+    var localPlaybackSession = beginPlaybackSession({ type: 'local', name: localTitle });
+    var token = localPlaybackSession.token;
     var firstVisualPlay = !firstPlayDone;
     if (localBeatAnalysis.active) cancelLocalBeatAnalysis();
     closeGsapModal(document.getElementById('local-beat-modal'));
@@ -18037,12 +17933,6 @@ function fxArchiveStateConfig() {
     }
   };
 }
-function defaultUserFxArchiveName(index) {
-  return MineradioModules.fxArchiveState.defaultUserFxArchiveName(index);
-}
-function normalizeUserFxArchiveName(name, index) {
-  return MineradioModules.fxArchiveState.normalizeUserFxArchiveName(name, index);
-}
 function archiveNumber(raw, key, fallback, min, max) {
   return MineradioModules.fxArchiveState.archiveNumber(raw, key, fallback, min, max);
 }
@@ -18151,87 +18041,6 @@ if (!hadStoredUserFxArchives) {
   saveUserFxArchives();
 }
 var userFxArchiveEditing = -1;
-function renderUserFxArchives() {
-  var grid = document.getElementById('user-archive-grid');
-  if (!grid) return;
-  grid.innerHTML = userFxArchives.map(function(slot, index){
-    var hasSave = !!slot.snapshot;
-    var editing = userFxArchiveEditing === index;
-    var nameHtml = editing
-      ? '<input class="user-archive-input" id="user-archive-input-' + index + '" type="text" maxlength="18" value="' + escHtml(slot.name) + '" onkeydown="handleUserFxArchiveRenameKey(event,' + index + ')">'
-      : '<div class="user-archive-name" title="' + escHtml(slot.name) + '">' + escHtml(slot.name) + '</div>';
-    var actionsHtml = editing
-      ? '<button type="button" onclick="commitUserFxArchiveRename(' + index + ')">确定</button>' +
-        '<button type="button" onclick="cancelUserFxArchiveRename()">取消</button>'
-      : '<button type="button" onclick="applyUserFxArchive(' + index + ')"' + (hasSave ? '' : ' disabled') + '>应用</button>' +
-        '<button type="button" onclick="saveUserFxArchive(' + index + ')">保存</button>' +
-        '<button type="button" onclick="renameUserFxArchive(' + index + ')">命名</button>';
-    return '<div class="user-archive-slot' + (hasSave ? ' has-save' : '') + '" data-slot="' + index + '">' +
-      nameHtml +
-      '<div class="user-archive-meta">' + formatUserArchiveTime(slot.savedAt) + '</div>' +
-      '<div class="user-archive-actions">' +
-        actionsHtml +
-      '</div>' +
-    '</div>';
-  }).join('');
-  if (userFxArchiveEditing >= 0) {
-    setTimeout(function(){
-      var input = document.getElementById('user-archive-input-' + userFxArchiveEditing);
-      if (input) {
-        input.focus();
-        input.select();
-      }
-    }, 0);
-  }
-}
-function saveUserFxArchive(index) {
-  index = clampRange(Number(index) || 0, 0, Math.max(0, userFxArchives.length - 1));
-  userFxArchives[index].snapshot = captureFxArchiveSnapshot();
-  userFxArchives[index].savedAt = Date.now();
-  userFxArchives[index].name = normalizeUserFxArchiveName(userFxArchives[index].name, index);
-  saveUserFxArchives();
-  renderUserFxArchives();
-  showToast('已保存到 ' + userFxArchives[index].name);
-}
-function applyUserFxArchive(index) {
-  index = clampRange(Number(index) || 0, 0, Math.max(0, userFxArchives.length - 1));
-  var slot = userFxArchives[index];
-  if (!slot || !slot.snapshot) {
-    showToast('这个用户存档还是空的');
-    return;
-  }
-  if (applyFxArchiveSnapshot(slot.snapshot)) {
-    showToast('已应用 ' + slot.name);
-  }
-}
-function renameUserFxArchive(index) {
-  index = clampRange(Number(index) || 0, 0, Math.max(0, userFxArchives.length - 1));
-  userFxArchiveEditing = index;
-  renderUserFxArchives();
-}
-function commitUserFxArchiveRename(index) {
-  index = clampRange(Number(index) || 0, 0, Math.max(0, userFxArchives.length - 1));
-  var input = document.getElementById('user-archive-input-' + index);
-  userFxArchives[index].name = normalizeUserFxArchiveName(input && input.value, index);
-  userFxArchiveEditing = -1;
-  saveUserFxArchives();
-  renderUserFxArchives();
-  showToast('已命名为 ' + userFxArchives[index].name);
-}
-function cancelUserFxArchiveRename() {
-  userFxArchiveEditing = -1;
-  renderUserFxArchives();
-}
-function handleUserFxArchiveRenameKey(e, index) {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    commitUserFxArchiveRename(index);
-  } else if (e.key === 'Escape') {
-    e.preventDefault();
-    cancelUserFxArchiveRename();
-  }
-}
-
 function defaultUserFxArchiveName(index) {
   return MineradioModules.fxArchiveState.defaultUserFxArchiveName(index);
 }
@@ -18251,8 +18060,8 @@ function renderUserFxArchives() {
     '<div class="user-archive-toolbar">' +
       '<div class="user-archive-note">空白新建，保存当前视觉参数；支持拖拽 JSON 导入，也可以导出为文件备份。</div>' +
       '<div class="user-archive-tools">' +
-        '<button class="fx-mini-btn ghost" type="button" onclick="createUserFxArchive()">新建</button>' +
-        '<button class="fx-mini-btn ghost" type="button" onclick="importUserFxArchiveFromDialog()">导入</button>' +
+        '<button class="fx-mini-btn ghost" type="button" data-action="fx-archive-create">新建</button>' +
+        '<button class="fx-mini-btn ghost" type="button" data-action="fx-archive-import">导入</button>' +
       '</div>' +
     '</div>';
   var cards = userFxArchives.map(function(slot, index){
@@ -18262,20 +18071,20 @@ function renderUserFxArchives() {
       ? '<input class="user-archive-input" id="user-archive-input-' + index + '" type="text" maxlength="28" value="' + escHtml(slot.name) + '" onkeydown="handleUserFxArchiveRenameKey(event,' + index + ')">'
       : '<div class="user-archive-name" title="' + escHtml(slot.name) + '">' + escHtml(slot.name) + '</div>';
     var actionsHtml = editing
-      ? '<button type="button" onclick="commitUserFxArchiveRename(' + index + ')">确定</button>' +
-        '<button type="button" onclick="cancelUserFxArchiveRename()">取消</button>'
-      : '<button type="button" onclick="applyUserFxArchive(' + index + ')"' + (hasSave ? '' : ' disabled') + '>应用</button>' +
-        '<button type="button" onclick="saveUserFxArchive(' + index + ')">保存</button>' +
-        '<button type="button" onclick="renameUserFxArchive(' + index + ')">命名</button>' +
-        '<button type="button" onclick="exportUserFxArchive(' + index + ')"' + (hasSave ? '' : ' disabled') + '>导出</button>' +
-        '<button type="button" onclick="removeUserFxArchive(' + index + ')">删除</button>';
+      ? '<button type="button" data-action="fx-archive-rename-commit" data-index="' + index + '">确定</button>' +
+        '<button type="button" data-action="fx-archive-rename-cancel">取消</button>'
+      : '<button type="button" data-action="fx-archive-apply" data-index="' + index + '"' + (hasSave ? '' : ' disabled') + '>应用</button>' +
+        '<button type="button" data-action="fx-archive-save" data-index="' + index + '">保存</button>' +
+        '<button type="button" data-action="fx-archive-rename" data-index="' + index + '">命名</button>' +
+        '<button type="button" data-action="fx-archive-export" data-index="' + index + '"' + (hasSave ? '' : ' disabled') + '>导出</button>' +
+        '<button type="button" data-action="fx-archive-remove" data-index="' + index + '">删除</button>';
     return '<div class="user-archive-slot' + (hasSave ? ' has-save' : '') + '" data-slot="' + index + '">' +
       nameHtml +
       '<div class="user-archive-meta">' + (hasSave ? formatUserArchiveTime(slot.savedAt) : '空白存档，点击保存写入当前视觉') + '</div>' +
       '<div class="user-archive-actions">' + actionsHtml + '</div>' +
     '</div>';
   }).join('');
-  var addCard = '<button class="user-archive-slot is-new" type="button" onclick="createUserFxArchive()"><strong>＋ 新建空白存档</strong><span class="user-archive-meta">可继续创建，不限制 4 个</span></button>';
+  var addCard = '<button class="user-archive-slot is-new" type="button" data-action="fx-archive-create"><strong>＋ 新建空白存档</strong><span class="user-archive-meta">可继续创建，不限制 4 个</span></button>';
   grid.innerHTML = toolbar + cards + addCard;
   bindUserFxArchiveDrop();
   if (userFxArchiveEditing >= 0) {
@@ -18462,9 +18271,9 @@ function bindUserFxArchiveDrop() {
 function buildLyricColorControls() {
   var grid = document.getElementById('lyric-color-grid');
   if (!grid) return;
-  var html = '<button class="lyric-swatch auto" type="button" data-auto="1" onclick="setLyricColorAuto()" title="封面取色">AUTO</button>';
+  var html = '<button class="lyric-swatch auto" type="button" data-auto="1" data-action="lyric-color-auto" title="封面取色">AUTO</button>';
   html += lyricColorPresets.map(function(p, i){
-    return '<button class="lyric-swatch" type="button" data-color="' + p.color + '" onclick="setLyricColorPreset(' + i + ')" title="' + escHtml(p.name) + '" style="--swatch:' + p.color + '"></button>';
+    return '<button class="lyric-swatch" type="button" data-color="' + p.color + '" data-action="lyric-color-preset" data-index="' + i + '" title="' + escHtml(p.name) + '" style="--swatch:' + p.color + '"></button>';
   }).join('');
   grid.innerHTML = html;
 }
@@ -18719,7 +18528,7 @@ async function openWallpaperEnginePicker(rescan, target) {
     if (grid) grid.innerHTML = items.map(function(it){
       var prev = it.hasPreview ? ('/api/wallpaper-engine/media?id=' + encodeURIComponent(it.id) + '&kind=preview') : '';
       var thumb = prev ? ('<img src="' + prev + '" alt="" loading="lazy" onerror="this.style.opacity=0.15">') : ('<div class="we-thumb-empty">' + (it.type === 'video' ? '🎞' : '🖼') + '</div>');
-      return '<button class="we-item' + (weGroupIds[it.id] ? ' selected' : '') + '" type="button" data-id="' + escHtml(it.id) + '" data-type="' + escHtml(it.type) + '" data-title="' + escHtml(it.title) + '" onclick="toggleWallpaperEngineItem(this)">' +
+      return '<button class="we-item' + (weGroupIds[it.id] ? ' selected' : '') + '" type="button" data-id="' + escHtml(it.id) + '" data-type="' + escHtml(it.type) + '" data-title="' + escHtml(it.title) + '" data-action="wallpaper-engine-item">' +
         '<div class="we-thumb">' + thumb + '<span class="we-type-badge">' + (it.type === 'video' ? '视频' : '图片') + '</span></div>' +
         '<div class="we-item-title">' + escHtml(it.title) + '</div></button>';
     }).join('');
@@ -19188,7 +18997,7 @@ function renderCoverPickerSwatches() {
   if (!wrap) return;
   var colors = coverPickerSwatchColors();
   wrap.innerHTML = colors.map(function(c){
-    return '<button type="button" style="--c:' + c + '" title="' + c.toUpperCase() + '" onclick="applyCoverPickerColor(\'' + c + '\')"></button>';
+    return '<button type="button" style="--c:' + c + '" title="' + c.toUpperCase() + '" data-action="cover-picker-color" data-value="' + c + '"></button>';
   }).join('');
 }
 function openCoverColorPicker(target) {
@@ -19380,7 +19189,7 @@ function buildPresetGrid() {
   grid.innerHTML = order.map(function(i){
     var p = presetMeta[i];
     var desc = p.descHtml || p.desc;
-    return '<div class="preset-card" data-preset="' + i + '" onclick="setPreset(' + i + ')">' +
+    return '<div class="preset-card" data-preset="' + i + '" data-action="visual-preset" data-index="' + i + '">' +
       '<div class="pc-icon">' + presetIcons[i] + '</div>' +
       '<div class="pc-name">' + p.name + '</div>' +
       '<div class="pc-desc">' + desc + '</div>' +
@@ -21424,19 +21233,61 @@ function renderTopAccountPill(provider) {
     vipTag +
   '</span>';
 }
-async function refreshLoginStatus(force) {
+var loginProfileHydrationToken = 0;
+var loginProfileRequest = null;
+function invalidateLoginProfileHydration() {
+  loginProfileHydrationToken += 1;
+  loginProfileRequest = null;
+}
+function hydrateLoginProfile() {
+  if (!loginStatus || !loginStatus.loggedIn || !loginStatus.profilePending) return Promise.resolve(loginStatus);
+  if (loginProfileRequest) return loginProfileRequest;
+  var token = loginProfileHydrationToken;
+  markAppPerf('account-profile-start');
+  loginProfileRequest = apiJson('/api/login/profile?t=' + Date.now(), { timeoutMs: 14000 })
+    .then(function(info) {
+      if (token !== loginProfileHydrationToken || !info || !info.loggedIn) return loginStatus;
+      loginStatus = info;
+      activeAccountProvider = 'youtube';
+      renderUserBtn();
+      updateUserModalUi();
+      markAppPerf('account-profile-ready');
+      return info;
+    })
+    .catch(function(error) {
+      if (token === loginProfileHydrationToken) console.warn('[LoginProfile]', error);
+      return loginStatus;
+    })
+    .finally(function() {
+      if (token === loginProfileHydrationToken) loginProfileRequest = null;
+    });
+  return loginProfileRequest;
+}
+function scheduleLoginProfileHydration() {
+  if (!loginStatus || !loginStatus.loggedIn || !loginStatus.profilePending || document.body.classList.contains('splash-active')) {
+    return Promise.resolve(loginStatus);
+  }
+  if (!startupTaskQueue) return hydrateLoginProfile();
+  return startupTaskQueue.enqueue('account-profile-hydration', hydrateLoginProfile, 1280);
+}
+async function refreshLoginStatus(options) {
+  options = options || {};
   try {
     var info = await apiJson('/api/login/status?t=' + Date.now());
     loginStatusChecked = true;
     loginStatusCheckFailed = false;
+    invalidateLoginProfileHydration();
     loginStatus = info || { loggedIn: false };
     activeAccountProvider = 'youtube';
     renderUserBtn();
     if (info && info.loggedIn) {
+      scheduleLoginProfileHydration();
       homeDiscoverState.loaded = false;
       homeDiscoverState.loggedIn = true;
-      refreshUserPlaylists(true);
-      loadHomeDiscover(true);
+      if (!options.deferHydration) {
+        refreshUserPlaylists(true);
+        loadHomeDiscover(true);
+      }
       syncLikeStatusForSongs(playQueue.concat(playlist || []));
     } else {
       userPlaylists = [];
@@ -21541,9 +21392,11 @@ async function openGoogleWebLogin() {
       body: JSON.stringify({ cookie: result.cookie })
     });
     if (!info || !info.loggedIn) throw new Error((info && (info.message || info.error)) || 'Google 会话不可用');
+    invalidateLoginProfileHydration();
     loginStatus = info;
     activeAccountProvider = 'youtube';
     renderUserBtn();
+    scheduleLoginProfileHydration();
     refreshUserPlaylists(true);
     loadHomeDiscover(true);
     if (statusEl) { statusEl.textContent = 'YouTube Music 会话已连接'; statusEl.className = 'scan'; }
@@ -21632,6 +21485,7 @@ async function logoutActiveAccount() {
 }
 async function doLogout() {
   await apiJson('/api/logout');
+  invalidateLoginProfileHydration();
   try {
     if (window.desktopWindow && typeof window.desktopWindow.clearGoogleAccountLogin === 'function') {
       await window.desktopWindow.clearGoogleAccountLogin();
@@ -22265,6 +22119,58 @@ function showToast(msg) {
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 2600);
 }
+
+var failureDiagnosticTimer = null;
+function closeFailureDiagnosticNotice() {
+  var notice = document.getElementById('failure-diagnostic-notice');
+  if (!notice) return;
+  notice.classList.remove('show');
+  notice.setAttribute('aria-hidden', 'true');
+  if (failureDiagnosticTimer) {
+    clearTimeout(failureDiagnosticTimer);
+    failureDiagnosticTimer = null;
+  }
+}
+function showFailureDiagnosticNotice() {
+  var notice = document.getElementById('failure-diagnostic-notice');
+  if (!notice) return;
+  notice.classList.add('show');
+  notice.setAttribute('aria-hidden', 'false');
+  if (failureDiagnosticTimer) clearTimeout(failureDiagnosticTimer);
+  failureDiagnosticTimer = setTimeout(closeFailureDiagnosticNotice, 9000);
+}
+function presentPlaybackFailure(stage, error, details) {
+  try {
+    failureDiagnosticExporter.recordFailure(stage, error, details || {});
+    showFailureDiagnosticNotice();
+  } catch (diagnosticError) {
+    console.warn('[FailureDiagnostics] capture failed:', diagnosticError);
+  }
+}
+async function exportFailureDiagnostics() {
+  var button = document.getElementById('failure-diagnostic-export-btn');
+  if (button) button.disabled = true;
+  try {
+    var outcome = await failureDiagnosticExporter.exportReport();
+    if (outcome && outcome.result && outcome.result.ok) {
+      showToast('失败诊断已导出');
+      closeFailureDiagnosticNotice();
+    } else if (!outcome || !outcome.result || !outcome.result.canceled) {
+      showToast('失败诊断导出失败');
+    }
+  } catch (error) {
+    console.warn('[FailureDiagnostics] export failed:', error);
+    showToast('失败诊断导出失败');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+(function bindFailureDiagnosticNotice() {
+  var exportButton = document.getElementById('failure-diagnostic-export-btn');
+  var closeButton = document.getElementById('failure-diagnostic-close-btn');
+  if (exportButton) exportButton.addEventListener('click', exportFailureDiagnostics);
+  if (closeButton) closeButton.addEventListener('click', closeFailureDiagnosticNotice);
+})();
 
 var visualGuideSteps = [
   {
@@ -23908,6 +23814,8 @@ function dismissSplash() {
         homeForcedOpen = true;
         homeShown = updateEmptyHomeVisibility({ forceLoad: true });
       }
+      scheduleStartupLibraryHydration();
+      scheduleLoginProfileHydration();
       requestAnimationFrame(function(){
         var guideStarted = maybeRunStartupVisualGuide('splash');
         if (!guideStarted && !hasAnyPlatformLogin()) maybeRunStartupLoginGuide('splash');
@@ -24343,12 +24251,25 @@ if (fx.floatLayer) createFloatLayer();
 if (fx.particleLyrics) createLyricsParticles();
 if (fx.backCover) createBackCoverLayer();
 initIdleGuideCanvas();
-var startupLoginStatusPromise = Promise.all([refreshLoginStatus()]);
+startupTaskQueue = createStartupTaskQueue({
+  schedule: function(task, delay) { scheduleVisualApply(task, delay, 2600); },
+  onError: function(error, key) { console.warn('[StartupTask]', key, error); }
+});
+function scheduleStartupLibraryHydration() {
+  if (!hasAnyPlatformLogin() || document.body.classList.contains('splash-active')) return Promise.resolve();
+  return startupTaskQueue.enqueue('library-hydration', function() {
+    if (!hasAnyPlatformLogin()) return;
+    markAppPerf('startup-library-start');
+    return refreshUserPlaylists(true).finally(function(){ markAppPerf('startup-library-ready'); });
+  }, 760);
+}
+var startupLoginStatusPromise = Promise.all([refreshLoginStatus({ deferHydration: true })]);
 if (startupLoginStatusPromise && startupLoginStatusPromise.then) {
   startupLoginStatusPromise.then(function(){
+    markAppPerf('login-status-ready');
     if (hasAnyPlatformLogin()) {
-      refreshUserPlaylists(true);
-      loadHomeDiscover(true);
+      scheduleStartupLibraryHydration();
+      scheduleLoginProfileHydration();
     }
     if (document.body.classList.contains('splash-active')) return;
     var homeShown = updateEmptyHomeVisibility({ forceLoad: hasAnyPlatformLogin() });
@@ -24693,3 +24614,192 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
+
+var dynamicActionDelegator = createDynamicActionDelegator({
+  document: document,
+  actions: {
+    'home-tile': function(ctx) { if (ctx.index != null) handleHomeTileClick(ctx.index); },
+    'home-user-playlist': function(ctx) { if (ctx.index != null) openHomeUserPlaylist(ctx.index); },
+    'home-recommendation': function(ctx) { if (ctx.index != null) playHomeRecommendation(ctx.index); },
+    'artist-play': function(ctx) { if (ctx.index != null) playArtistDetailSong(ctx.index); },
+    'artist-collect': function(ctx) { if (ctx.index != null) collectArtistDetailSong(ctx.index); },
+    'artist-queue-next': function(ctx) { if (ctx.index != null) queueArtistDetailSongNext(ctx.index); },
+    'collect-target-add': function(ctx) { if (ctx.playlistId) addCollectTargetToPlaylist(ctx.playlistId); },
+    'podcast-open': function(ctx) { if (ctx.index != null) openPodcastPrograms(ctx.index); },
+    'podcast-back': function() { renderPodcastRadios(podcastResults); },
+    'podcast-play': function(ctx) { if (ctx.index != null) playPodcastProgram(ctx.index); },
+    'podcast-queue': function(ctx) { if (ctx.index != null) queuePodcastProgram(ctx.index); },
+    'search-artist': function(ctx) { if (ctx.index != null) openSearchResultArtist(ctx.index); },
+    'search-play': function(ctx) { if (ctx.index != null) playSearchResult(ctx.index); },
+    'search-like': function(ctx) { if (ctx.index != null) toggleLikeSearchResult(ctx.index); },
+    'search-collect': function(ctx) { if (ctx.index != null) collectSearchResult(ctx.index); },
+    'search-queue': function(ctx) { if (ctx.index != null) queueSearchResult(ctx.index); },
+    'queue-play': function(ctx) { if (ctx.index != null) playQueueAt(ctx.index); },
+    'queue-artist': function(ctx) { if (ctx.index != null) openQueueArtist(ctx.index); },
+    'queue-like': function(ctx) { if (ctx.index != null) toggleLikeQueueIndex(ctx.index); },
+    'queue-next': function(ctx) { if (ctx.index != null) queueIndexNext(ctx.index); },
+    'queue-collect': function(ctx) { if (ctx.index != null) collectQueueIndex(ctx.index); },
+    'queue-remove': function(ctx) { if (ctx.index != null) removeFromQueue(ctx.index); },
+    'song-like': function(ctx) { dispatchLegacySongAction('like', ctx); },
+    'song-collect': function(ctx) { dispatchLegacySongAction('collect', ctx); },
+    'fx-archive-create': function() { createUserFxArchive(); },
+    'fx-archive-import': function() { importUserFxArchiveFromDialog(); },
+    'fx-archive-rename-commit': function(ctx) { if (ctx.index != null) commitUserFxArchiveRename(ctx.index); },
+    'fx-archive-rename-cancel': function() { cancelUserFxArchiveRename(); },
+    'fx-archive-apply': function(ctx) { if (ctx.index != null) applyUserFxArchive(ctx.index); },
+    'fx-archive-save': function(ctx) { if (ctx.index != null) saveUserFxArchive(ctx.index); },
+    'fx-archive-rename': function(ctx) { if (ctx.index != null) renameUserFxArchive(ctx.index); },
+    'fx-archive-export': function(ctx) { if (ctx.index != null) exportUserFxArchive(ctx.index); },
+    'fx-archive-remove': function(ctx) { if (ctx.index != null) removeUserFxArchive(ctx.index); },
+    'lyric-color-auto': function() { setLyricColorAuto(); },
+    'lyric-color-preset': function(ctx) { if (ctx.index != null) setLyricColorPreset(ctx.index); },
+    'wallpaper-engine-item': function(ctx) { toggleWallpaperEngineItem(ctx.target); },
+    'cover-picker-color': function(ctx) { if (ctx.value) applyCoverPickerColor(ctx.value); },
+    'visual-preset': function(ctx) { if (ctx.index != null) setPreset(ctx.index); }
+  }
+});
+dynamicActionDelegator.bind();
+
+function dispatchLegacySongAction(kind, ctx) {
+  if (ctx.index == null) return;
+  var source = String(ctx.source || '');
+  if (source === 'SearchResult') {
+    if (kind === 'like') toggleLikeSearchResult(ctx.index);
+    else collectSearchResult(ctx.index);
+    return;
+  }
+  if (source === 'QueueIndex') {
+    if (kind === 'like') toggleLikeQueueIndex(ctx.index);
+    else collectQueueIndex(ctx.index);
+  }
+}
+
+// Static HTML still owns legacy inline controls at the module boundary.
+Object.assign(window, {
+  addCollectTargetToPlaylist,
+  applyCoverPickerColor,
+  applyWallpaperEngineSelection,
+  applyUserFxArchive,
+  cancelLocalBeatAnalysis,
+  cancelUserFxArchiveRename,
+  clearCustomBackgroundImage,
+  clearCustomCoverForCurrent,
+  clearHomeHeroBg,
+  clearQueue,
+  closeCollectModal,
+  closeColorLab,
+  closeCoverColorPicker,
+  closeCoverCropModal,
+  closeCustomLyricModal,
+  closeLocalBeatModal,
+  closeLoginModal,
+  closeMiniQueue,
+  closeSourceFallbackNotice,
+  closeTrackDetailModal,
+  closeUpdatePanel,
+  closeUploadTip,
+  closeUserModal,
+  closeVisualGuide,
+  closeWallpaperEnginePicker,
+  commitCoverCrop,
+  commitUserFxArchiveRename,
+  collectArtistDetailSong,
+  collectQueueIndex,
+  collectSearchResult,
+  createPlaylistFromCollect,
+  createUserFxArchive,
+  cyclePlayMode,
+  deleteCustomLyricForCurrent,
+  exportUserFxArchive,
+  goHome,
+  handleLyricGlowRowClick,
+  hideCoverColorLoupe,
+  importUserFxArchiveFromDialog,
+  logoutActiveAccount,
+  moveCoverColorLoupe,
+  nextTrack,
+  nextVisualGuideStep,
+  onUserBtnClick,
+  openCollectModalForCurrent,
+  openCoverColorPicker,
+  openHomeHeroBgMenu,
+  openHomeInsight,
+  openHomeLibrary,
+  openHomePlayerConsole,
+  openHomeUserPlaylist,
+  openPodcastPrograms,
+  openProviderLogin,
+  openQueueArtist,
+  openSearchResultArtist,
+  openTrackDetailModal,
+  openUpdatePanel,
+  openWallpaperEnginePicker,
+  pickCoverColorFromArt,
+  pickHomeHeroBgFromWe,
+  playArtistDetailSong,
+  playHomeNowResume,
+  playHomeRecent,
+  playHomeSong,
+  playPodcastProgram,
+  playQueueAt,
+  playSearchResult,
+  prevTrack,
+  queueArtistDetailSongNext,
+  queueIndexNext,
+  queuePodcastProgram,
+  queueSearchResult,
+  readHomeHeroBgFile,
+  refreshUserPlaylists,
+  removeFromQueue,
+  removeUserFxArchive,
+  renameUserFxArchive,
+  renderPodcastRadios,
+  resetCustomBackgroundColor,
+  resetFx,
+  resetHomeAccentColor,
+  resetHomeIconColor,
+  resetShelfAccentColor,
+  resetUiAccentColor,
+  resetVisualIconColor,
+  resetVisualTintColor,
+  saveCustomLyricForCurrent,
+  saveUserFxArchive,
+  selectLocalBeatMode,
+  setActiveAccountProvider,
+  setLyricColorAuto,
+  setLyricColorPreset,
+  setLyricFont,
+  setLyricHighlightAuto,
+  setLyricSourceMode,
+  setSearchMode,
+  setPreset,
+  showLoginModal,
+  shuffleQueue,
+  skipLoginAndFocusSearch,
+  startLocalBeatAnalysis,
+  startProviderLogin,
+  startUpdatePreviewDownload,
+  startVisualGuide,
+  switchPlaylistTab,
+  toggleControlsAutoHide,
+  toggleDiyMode,
+  toggleFullLyrics,
+  toggleFullscreen,
+  toggleFx,
+  toggleFxFabAutoHide,
+  toggleImmersiveMode,
+  toggleLikeCurrent,
+  toggleLikeQueueIndex,
+  toggleLikeSearchResult,
+  toggleLyricGlowLink,
+  toggleLyricTranslation,
+  toggleLyricsPanel,
+  toggleMiniQueue,
+  togglePlay,
+  togglePlaylistPanelPinned,
+  toggleUserCapsuleAutoHide,
+  toggleVolumePanel,
+  toggleWallpaperEngineItem,
+  triggerHomeHeroBgUpload,
+  swapBackgroundWithTransition,
+});

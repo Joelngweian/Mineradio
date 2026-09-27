@@ -1,8 +1,3 @@
-(function(global) {
-  'use strict';
-
-  global.MineradioModules = global.MineradioModules || {};
-
   function num(value, fallback) {
     var n = Number(value);
     return isFinite(n) ? n : (fallback == null ? 0 : fallback);
@@ -137,9 +132,8 @@
     };
   }
 
-  global.MineradioModules.beatDynamics = {
-    beatClimaxScore: beatClimaxScore,
-    cameraBeatEnvelope: cameraBeatEnvelope,
-    pulseEnvelope: pulseEnvelope
-  };
-})(typeof window !== 'undefined' ? window : globalThis);
+export {
+  beatClimaxScore,
+  cameraBeatEnvelope,
+  pulseEnvelope,
+};

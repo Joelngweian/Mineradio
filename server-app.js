@@ -13,28 +13,34 @@ function applyWindowsUtf8Console() {
 }
 applyWindowsUtf8Console();
 const vm = require('vm');
-const { Innertube, Platform } = require('youtubei.js');
-const { Readable } = require('stream');
-const { JSDOM } = require('jsdom');
+const { createYtmSession } = require('./server/services/ytm-session');
+const { createYtmAudioService } = require('./server/services/ytm-audio');
+const { createRadioService } = require('./server/services/radio-service');
+const { createLyricsService } = require('./server/services/lyrics-service');
+const { createLoginService } = require('./server/services/login-service');
+const { createYtmRouteHandler } = require('./server/routes/ytm-routes');
+const { snapshotRuntimeDiagnostics } = require('./server/services/runtime-diagnostics');
 
-// 注入 Node 环境下的 JavaScript Evaluator (解决 YouTube 签名解密 No valid URL to decipher 报错)
-Platform.shim.eval = async (data, env) => vm.runInNewContext(`(function() { ${data.output} })()`, env);
-
-let ytInstance = null;
-let lastCookieUsed = null;
-
+let ytmSession = null;
+let ytmAudioService = null;
+let radioService = null;
+let ytmRuntime = null;
+let loginService = null;
+function getYtmRuntime() {
+  if (ytmRuntime) return ytmRuntime;
+  const { Innertube, Platform } = require('youtubei.js');
+  // 注入 Node 环境下的 JavaScript Evaluator (解决 YouTube 签名解密 No valid URL to decipher 报错)
+  Platform.shim.eval = async (data, env) => vm.runInNewContext(`(function() { ${data.output} })()`, env);
+  ytmRuntime = { Innertube };
+  return ytmRuntime;
+}
+function LazyJSDOM(...args) {
+  const { JSDOM } = require('jsdom');
+  return new JSDOM(...args);
+}
 async function getYTMusic(customCookie) {
-  const cookieToUse = customCookie !== undefined ? customCookie : userCookie;
-  if (!ytInstance || lastCookieUsed !== cookieToUse) {
-    try {
-      ytInstance = await Innertube.create({ cookie: cookieToUse || undefined });
-      lastCookieUsed = cookieToUse;
-    } catch(e) {
-      console.warn('[YTM Engine Init Warning]', e.message);
-      if (!ytInstance) ytInstance = await Innertube.create();
-    }
-  }
-  return ytInstance;
+  ensureYtmServices();
+  return ytmSession.getYTMusic(customCookie);
 }
 function isYtmLikedPlaylistId(playlistId) {
   const id = String(playlistId || '').trim().toUpperCase();
@@ -205,6 +211,8 @@ const {
   beatCacheRootInfo,
   readBeatMapCache,
   writeBeatMapCache,
+  cancelUpdateJobs,
+  updateDownloadJobs,
 } = require('./server/update-service');
 const API_ROUTE_PATHS = Object.freeze([
   '/api/app/version',
@@ -215,8 +223,10 @@ const API_ROUTE_PATHS = Object.freeze([
   '/api/cover',
   '/api/debug/audio',
   '/api/debug/lyric',
+  '/api/diagnostics/runtime',
   '/api/discover/home',
   '/api/login/cookie',
+  '/api/login/profile',
   '/api/login/status',
   '/api/logout',
   '/api/lyric',
@@ -354,9 +364,44 @@ if (!userCookie) {
 }
 function saveCookie(c) {
   userCookie = normalizeCookieHeader(c) || rawCookieFallback(c);
+  if (loginService) loginService.reset();
   try { fs.writeFileSync(COOKIE_FILE, userCookie); } catch (e) {}
   try { fs.writeFileSync(path.join(__dirname, '.google-cookie'), userCookie); } catch (e) {}
 }
+
+function ensureYtmServices() {
+  if (ytmSession && ytmAudioService && radioService) return;
+  const { Innertube } = getYtmRuntime();
+  ytmSession = createYtmSession({
+    Innertube,
+    JSDOM: LazyJSDOM,
+    userAgent: UA,
+    getCookie: () => userCookie,
+    logger: console,
+  });
+  ytmAudioService = createYtmAudioService({
+    Innertube,
+    userAgent: UA,
+    getCookie: () => userCookie,
+    getVisitorData: () => ytmSession.getVisitorData(),
+    getContentPoToken: (sid, forceRefresh) => ytmSession.getContentPoToken(sid, forceRefresh),
+    requestJson,
+    logger: console,
+  });
+  radioService = createRadioService({
+    getYTMusic,
+    handleSearch,
+    mapPanelVideo,
+    logger: console,
+  });
+}
+
+const lyricsService = createLyricsService({
+  requestJson,
+  getYTMusic,
+  userAgent: UA,
+  logger: console,
+});
 
 // ---------- 工具 ----------
 function serveStatic(res, filePath) {
@@ -1148,788 +1193,8 @@ async function handleYouTubeComments(videoId, limit) {
   return comments;
 }
 
-// ---------- LrcLib 时间轴歌词（Metrolist 主力歌词源） ----------
-const LRCLIB_BASE = 'https://lrclib.net/api';
-const LRCLIB_UA = 'Mineradio/1.2.0 (https://github.com/XxHuberrr/Mineradio)';
-const LRCLIB_HEADERS = { 'User-Agent': LRCLIB_UA, Accept: 'application/json' };
-const lrcLibCache = new Map();
-
-function primaryArtistName(artist) {
-  return String(artist || '').split(/\s*\/\s*|、|,|&|feat\.?|ft\.?/i)[0].trim();
-}
-
-// 清洗歌名：去掉 YouTube 标题里的噪音（官方视频/歌词版/OST/竖线后缀/フルバージョン/抖音热歌/动画描述 等）
-function cleanLyricTitle(name) {
-  let t = String(name || '');
-  t = t.split(/\s*[|｜]\s*/)[0]; // 取竖线前的主标题
-  t = t.replace(/[『「][^』」]*[』」]/g, ' '); // 去掉日文书名号内容（多为动画/专辑名）
-  // 去掉含噪音关键词的括号段
-  t = t.replace(/[\(\[（【][^\)\]）】]*(?:official|video|audio|lyric|lyrics|visuali[sz]er|mv|m\/v|hd|4k|hq|remaster(?:ed)?|live|cover|instrumental|karaoke|full\s*ver(?:sion)?|フルバージョン|完整版|高音质|无损|抖音|热歌|純音[樂楽]|OST|ost)[^\)\]）】]*[\)\]）】]/gi, '');
-  t = t.replace(/\s*[\(\[]?\s*(?:feat\.?|ft\.?)\s+[^\)\]]*[\)\]]?/gi, ''); // feat. xxx
-  // 去掉描述性尾巴：从 “- アニメ / - OST / - Theme / - 主題歌 …” 起到结尾
-  t = t.replace(/\s*[-–—]\s*(?:アニメ|anime|OST|ost|主題歌|主题歌|オープニング|エンディング|挿入歌|テーマ|opening|ending|theme|插曲|片頭曲|片头曲|片尾曲|名場面)[\s\S]*$/i, '');
-  t = t.replace(/\s*-\s*topic\s*$/i, '');
-  t = t.replace(/【[^】]*】/g, ''); // 残留全角方括号段
-  return t.replace(/\s{2,}/g, ' ').trim();
-}
-
-// 占位歌手名（YTM 无 author 时填的默认值 / 各种“未知”），匹配歌词时应视作“无歌手”，否则污染查询。
-function isPlaceholderArtist(a) {
-  const s = String(a || '').trim().toLowerCase();
-  return !s || s === 'unknown artist' || s === 'unknown' || s === 'various artists'
-    || s === 'va' || s === 'v.a.' || s === 'artist' || s === '未知歌手' || s === '未知艺术家' || s === '群星';
-}
-// 从标题里抢救 feat./ft. 后面的演出者（歌手是占位符时用它当匹配歌手，命中率高很多）。
-function featArtistFromTitle(name) {
-  const m = String(name || '').match(/(?:^|[\s(\[（【「『])(?:feat\.?|ft\.?|featuring)\s+([^)\]\-|｜、,]+)/i);
-  return m ? m[1].replace(/[)\]】』」]/g, '').trim() : '';
-}
-function cleanLyricArtist(artist) {
-  const a = primaryArtistName(artist).replace(/\s*-\s*topic\s*$/i, '').replace(/\s*vevo\s*$/i, '').trim();
-  return isPlaceholderArtist(a) ? '' : a;
-}
-// 归一化匹配键：小写、去括号内容(feat/版本)、只保留字母数字与 CJK，用来校验歌名/歌手是否真的对得上。
-function normalizeMatchKey(s) {
-  return String(s || '').toLowerCase()
-    .replace(/[\(\[（【][^\)\]）】]*[\)\]）】]/g, ' ')
-    .replace(/[^0-9a-z぀-ヿ㐀-鿿가-힣]+/g, '')
-    .trim();
-}
-// 一方包含另一方即算匹配（容忍多余的版本/feat 信息）。任一侧为空则不算匹配。
-function matchKeyContains(a, b) {
-  a = normalizeMatchKey(a); b = normalizeMatchKey(b);
-  if (!a || !b) return false;
-  return a.includes(b) || b.includes(a);
-}
-
-async function lrcLibGet(artist, track, album, durationSec) {
-  const u = new URL(LRCLIB_BASE + '/get');
-  u.searchParams.set('artist_name', artist);
-  u.searchParams.set('track_name', track);
-  if (album) u.searchParams.set('album_name', album);
-  if (durationSec > 0) u.searchParams.set('duration', String(durationSec));
-  const body = await requestJson(u.toString(), { headers: LRCLIB_HEADERS });
-  if (body && (body.syncedLyrics || body.plainLyrics)) {
-    return { synced: body.syncedLyrics || '', plain: body.plainLyrics || '', source: 'lrclib-get' };
-  }
-  return null;
-}
-
-async function lrcLibSearch(track, artist, durationSec) {
-  const u = new URL(LRCLIB_BASE + '/search');
-  u.searchParams.set('track_name', track);
-  if (artist) u.searchParams.set('artist_name', artist);
-  const list = await requestJson(u.toString(), { headers: LRCLIB_HEADERS });
-  if (!Array.isArray(list) || !list.length) return null;
-  const best = list.map(item => {
-    const titleOk = matchKeyContains(item.trackName || item.name, track);
-    const artistOk = artist ? matchKeyContains(item.artistName, artist) : false;
-    const diff = (durationSec > 0 && item.duration) ? Math.abs(Number(item.duration) - durationSec) : 999;
-    let score = 0;
-    if (item.syncedLyrics) score += 10;
-    if (titleOk) score += 4;
-    if (artistOk) score += 5;
-    if (durationSec > 0 && item.duration) {
-      if (diff <= 2) score += 6; else if (diff <= 5) score += 3; else if (diff > 25) score -= 5;
-    }
-    return { item, score, titleOk, artistOk, diff };
-  }).sort((a, b) => b.score - a.score)[0];
-  // 置信门槛：歌名必须匹配，且(歌手匹配 或 时长很接近≤8s)，否则不采信——
-  // 避免无歌手/纯歌名搜索时配到同名的另一首歌。
-  if (!best || !best.titleOk) return null;
-  if (!best.artistOk && !(durationSec > 0 && best.diff <= 8)) return null;
-  if (best.item && (best.item.syncedLyrics || best.item.plainLyrics)) {
-    return { synced: best.item.syncedLyrics || '', plain: best.item.plainLyrics || '', source: 'lrclib-search' };
-  }
-  return null;
-}
-
-// 多候选瀑布：清洗名/原名 × 精确匹配/搜索/无歌手搜索
-async function fetchLrcLibLyrics(opts) {
-  opts = opts || {};
-  const rawTrack = String(opts.track || '').trim();
-  if (!rawTrack) return null;
-  const cleanTrack = cleanLyricTitle(rawTrack) || rawTrack;
-  const artist = cleanLyricArtist(opts.artist);
-  const album = String(opts.album || '').trim();
-  const durationSec = Math.round(Number(opts.durationSec || 0)) || 0;
-  const cacheKey = (cleanTrack + '|' + artist + '|' + durationSec).toLowerCase();
-  if (lrcLibCache.has(cacheKey)) return lrcLibCache.get(cacheKey);
-
-  const tracks = cleanTrack.toLowerCase() === rawTrack.toLowerCase() ? [cleanTrack] : [cleanTrack, rawTrack];
-  // 候选按优先级排列：精确匹配 > 带歌手搜索 > 无歌手搜索，清洗名优先于原始名。
-  // lrclib.net 每次请求都要 ~7s（服务端 TTFB），串行会把延迟叠加到十几秒；改为全部并发发出，
-  // 再按优先级挑第一个命中的，延迟从 N×7s 降到约 1×7s。
-  const attempts = [];
-  for (const tk of tracks) {
-    if (artist) attempts.push(() => lrcLibGet(artist, tk, album, durationSec)); // 1) 精确匹配（需歌手）
-    attempts.push(() => lrcLibSearch(tk, artist, durationSec));                  // 2) 搜索（歌手已知时带歌手；未知时才纯歌名）
-  }
-  // 注：不再对“已知歌手”做无歌手的纯歌名兜底搜索——它会把同名的另一首歌（甚至别的语言）
-  // 靠时长凑上来，造成“歌词是错的”。歌手已知却搜不到，就宁可没有歌词。
-  // 全部并发发出，再按优先级顺序取结果：高优先级一旦命中就立刻返回，不等低优先级的慢请求
-  // （避免精确匹配已命中却还要干等两个慢搜索）。
-  const inflight = attempts.map(fn => fn().catch(() => null));
-  let result = null;
-  for (const p of inflight) {
-    const r = await p;
-    if (r && (r.synced || r.plain)) { result = r; break; }
-  }
-  lrcLibCache.set(cacheKey, result);
-  if (lrcLibCache.size > 500) lrcLibCache.delete(lrcLibCache.keys().next().value);
-  return result;
-}
-
-// CJK（假名 + 中日韩汉字 + 谚文）：网易云对这类歌覆盖远好于 LrcLib，优先网易云原词。
-// 罗马字标题的日语歌也能靠汉字歌手名命中；纯西方歌不含 CJK，仍走 LrcLib 优先。
-function looksCJK(text) {
-  return /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7A3]/.test(String(text || ''));
-}
-async function tryNeteaseOriginal(meta) {
-  try {
-    const ne = await fetchNeteaseLyric({ name: meta.name, artist: meta.artist, durationSec: meta.durationSec });
-    if (ne && ne.origLrc && /\[\d+:\d+/.test(ne.origLrc)) return { lyric: ne.origLrc, source: 'netease' };
-  } catch (e) {}
-  return null;
-}
-// 统一歌词解析：LrcLib 优先(按时长匹配，时间轴最贴合正在播放的版本) → 同步歌词没有时
-// CJK 用网易云补覆盖(日语等) → LrcLib 纯文本 → 非 CJK 网易云兜底 → YTM 内置纯文本。
-async function resolveLyrics(meta) {
-  meta = meta || {};
-  // 歌手是占位符(Unknown Artist/未知歌手/群星…)会污染匹配：优先从标题里的 feat./ft. 抢救真正的
-  // 演出者当匹配歌手，否则当“无歌手”(仅靠歌名+时长匹配)。
-  if (isPlaceholderArtist(meta.artist)) {
-    meta = Object.assign({}, meta, { artist: featArtistFromTitle(meta.name) });
-  }
-  let out = { lyric: '', source: 'empty' };
-  const cjk = looksCJK(meta.name) || looksCJK(meta.artist);
-  const lrcArgs = { track: meta.name, artist: meta.artist, album: meta.album, durationSec: meta.durationSec };
-  if (cjk) {
-    // 华语/日韩：网易云覆盖好、且在亚洲区快得多（实测 ~0.6s vs lrclib.net 每次请求约 9s）。
-    // 优先网易云原词 → 歌词几乎即时出现；网易缺了才回退 LrcLib（按时长匹配的时间轴）。
-    const ne = await tryNeteaseOriginal(meta);
-    if (ne) out = ne;
-    if (!out.lyric) {
-      const lrc = await fetchLrcLibLyrics(lrcArgs);
-      if (lrc && lrc.synced) out = { lyric: lrc.synced, source: lrc.source };
-      else if (lrc && lrc.plain) out = { lyric: lrc.plain, source: lrc.source + '-plain' };
-    }
-  } else {
-    // 非 CJK（欧美）：网易云基本没有，LrcLib 优先（按时长匹配，时间轴最准），网易云仅兜底。
-    const lrc = await fetchLrcLibLyrics(lrcArgs);
-    if (lrc && lrc.synced) out = { lyric: lrc.synced, source: lrc.source };
-    else if (lrc && lrc.plain) out = { lyric: lrc.plain, source: lrc.source + '-plain' };
-    if (!out.lyric) {
-      const ne = await tryNeteaseOriginal(meta);
-      if (ne) out = ne;
-    }
-  }
-  if (!out.lyric && meta.videoId) {
-    try {
-      const yt = await getYTMusic();
-      const l = await yt.music.getLyrics(meta.videoId);
-      const text = l && l.description && l.description.text ? String(l.description.text) : '';
-      if (text) out = { lyric: text, source: 'youtube' };
-    } catch (e) { console.warn('[Lyric YTM]', e.message); }
-  }
-  const synced = /\[\d+:\d+/.test(out.lyric || '');
-  console.log('[Lyric] "' + (meta.name || '') + '" / "' + (meta.artist || '') + '" -> ' + out.source + (out.lyric ? (synced ? ' (synced)' : ' (plain)') : ' NONE'));
-  return out;
-}
-
-// ---------- 歌词翻译（Google 免费翻译端点，分块 + 逐行对齐） ----------
-async function googleTranslateLines(lines, to) {
-  to = to || 'zh-CN';
-  const out = [];
-  const CHUNK = 40;
-  for (let i = 0; i < lines.length; i += CHUNK) {
-    const chunk = lines.slice(i, i + CHUNK);
-    const q = chunk.join('\n');
-    let translatedText = '';
-    try {
-      const u = new URL('https://translate.googleapis.com/translate_a/single');
-      u.searchParams.set('client', 'gtx');
-      u.searchParams.set('sl', 'auto');
-      u.searchParams.set('tl', to);
-      u.searchParams.set('dt', 't');
-      u.searchParams.set('q', q);
-      const body = await requestJson(u.toString(), { headers: { 'User-Agent': UA, Accept: 'application/json' } });
-      if (Array.isArray(body) && Array.isArray(body[0])) {
-        translatedText = body[0].map(seg => (seg && seg[0]) || '').join('');
-      }
-    } catch (e) {
-      console.warn('[Translate]', e.message);
-    }
-    const parts = translatedText.split('\n');
-    for (let k = 0; k < chunk.length; k++) {
-      out.push(parts[k] != null ? String(parts[k]).trim() : '');
-    }
-  }
-  return out;
-}
-
-// ---------- 网易云社区人工翻译歌词（质量优于机器翻译，尤其日语；带时间轴） ----------
-const NETEASE_LYRIC_HEADERS = { 'User-Agent': UA, Referer: 'https://music.163.com/' };
-const neteaseTlyricCache = new Map();
-
-async function neteaseSearchSongId(track, artist, durationSec) {
-  const query = (String(track || '') + ' ' + String(artist || '')).trim();
-  if (!query) return null;
-  const u = new URL('https://music.163.com/api/search/get');
-  u.searchParams.set('s', query);
-  u.searchParams.set('type', '1');
-  u.searchParams.set('limit', '10');
-  const body = await requestJson(u.toString(), { headers: NETEASE_LYRIC_HEADERS, timeoutMs: 5000 });
-  const songs = (body && body.result && body.result.songs) || [];
-  if (!songs.length) return null;
-  // 置信门槛：歌名必须匹配；再要求(歌手匹配 或 时长很接近≤5s)。都不满足就不采信——
-  // 宁可没有歌词，也不要配到同名的另一首歌（否则会显示完全无关的错词）。
-  let best = null, bestScore = -1;
-  for (const song of songs) {
-    if (!matchKeyContains(song.name, track)) continue;
-    const artistStr = (song.artists || []).map(a => a && a.name).filter(Boolean).join(' ');
-    const artistOk = artist ? matchKeyContains(artistStr, artist) : false;
-    // 必须歌名 + 歌手都对上才采信网易——只靠“时长接近”会把同名的另一首歌（甚至别的语言）凑成错词。
-    if (!artistOk) continue;
-    const durMs = Number(song.duration) || 0;
-    const durDiff = (durationSec > 0 && durMs) ? Math.abs(durMs / 1000 - durationSec) : 999;
-    const score = 10 + Math.max(0, 8 - durDiff);
-    if (score > bestScore) { bestScore = score; best = song; }
-  }
-  return best ? best.id : null;
-}
-
-async function fetchNeteaseLyric(opts) {
-  opts = opts || {};
-  const track = cleanLyricTitle(opts.name) || String(opts.name || '').trim();
-  const artist = cleanLyricArtist(opts.artist);
-  if (!track) return null;
-  const durationSec = Math.round(Number(opts.durationSec || 0)) || 0;
-  const cacheKey = ('ne|' + track + '|' + artist + '|' + durationSec).toLowerCase();
-  if (neteaseTlyricCache.has(cacheKey)) return neteaseTlyricCache.get(cacheKey);
-  let result = null;
-  try {
-    const id = await neteaseSearchSongId(track, artist, durationSec);
-    if (id) {
-      const u = new URL('https://music.163.com/api/song/lyric');
-      u.searchParams.set('id', String(id));
-      u.searchParams.set('lv', '1');
-      u.searchParams.set('kv', '1');
-      u.searchParams.set('tv', '1');
-      const body = await requestJson(u.toString(), { headers: NETEASE_LYRIC_HEADERS, timeoutMs: 6000 });
-      const tlyric = body && body.tlyric && body.tlyric.lyric ? String(body.tlyric.lyric).trim() : '';
-      const olyric = body && body.lrc && body.lrc.lyric ? String(body.lrc.lyric).trim() : '';
-      if ((olyric && /\[\d+:\d+/.test(olyric)) || (tlyric && /\[\d+:\d+/.test(tlyric))) {
-        result = { origLrc: olyric, transLrc: tlyric, source: 'netease' };
-      }
-    }
-  } catch (e) {
-    console.warn('[NeteaseLyric]', e.message);
-  }
-  neteaseTlyricCache.set(cacheKey, result);
-  if (neteaseTlyricCache.size > 500) neteaseTlyricCache.delete(neteaseTlyricCache.keys().next().value);
-  return result;
-}
-async function fetchNeteaseTranslatedLyric(opts) {
-  const ne = await fetchNeteaseLyric(opts);
-  return (ne && ne.transLrc && /\[\d+:\d+/.test(ne.transLrc)) ? { transLrc: ne.transLrc, origLrc: ne.origLrc, source: 'netease-tlyric' } : null;
-}
-
-// LRC → [{t(ms), text}]
-function parseLrcEntries(lrc) {
-  const out = [];
-  String(lrc || '').split(/\r?\n/).forEach(raw => {
-    const tags = raw.match(/\[(\d+):(\d+(?:[.:]\d+)?)\]/g);
-    if (!tags) return;
-    const text = raw.replace(/\[(\d+):(\d+(?:[.:]\d+)?)\]/g, '').trim();
-    tags.forEach(tag => {
-      const m = tag.match(/\[(\d+):(\d+(?:[.:]\d+)?)\]/);
-      if (m) {
-        const tsec = parseInt(m[1], 10) * 60 + parseFloat(m[2].replace(':', '.'));
-        out.push({ t: Math.round(tsec * 1000), text });
-      }
-    });
-  });
-  return out;
-}
-function normLyricLine(str) {
-  return String(str || '').toLowerCase().replace(/[\s\u3000.,!?，。！？、…「」『』"'`\-—~()（）\[\]]+/g, '').trim();
-}
-// 把网易云 原词↔译词 按时间戳配对，返回 归一化原词 -> 译词 的映射
-function buildNeteaseTransMap(origLrc, transLrc) {
-  const orig = parseLrcEntries(origLrc);
-  const trans = parseLrcEntries(transLrc);
-  const transByTime = {};
-  trans.forEach(e => { if (e.text) transByTime[e.t] = e.text; });
-  const map = {};
-  orig.forEach(e => {
-    const tr = transByTime[e.t];
-    if (tr) { const k = normLyricLine(e.text); if (k && !map[k]) map[k] = tr; }
-  });
-  return map;
-}
-
-// ---------- YTM 音频流解析 ----------
-// 优先走 youtubei.js 的 WEB_CREATOR 客户端，由库内部处理 YouTube 的签名解密；
-// 同时为每首视频生成 WebPO Token，避免 YouTube 只放行冷启动前 1-2MB 后 403。
-// 旧 ANDROID_VR / TVHTML5 手写请求只作为最后兜底，避免 YouTube 策略变化时所有歌曲一起失效。
-const YTM_PLAYER_URL = 'https://music.youtube.com/youtubei/v1/player?prettyPrint=false';
-const YTM_WEB_URL = 'https://www.youtube.com';
-const YTM_WEBPO_REQUEST_KEY = 'O43z0dpjhgX20SCx4KAo';
-const YTM_PLAYER_CLIENTS = [
-  {
-    key: 'WEB_CREATOR_DECIPHER',
-    youtubeiClient: 'WEB_CREATOR',
-  },
-  {
-    key: 'WEB_DECIPHER',
-    youtubeiClient: 'WEB',
-  },
-  {
-    key: 'ANDROID_VR_1.43.32',
-    clientName: 'ANDROID_VR', clientVersion: '1.43.32', clientId: '28',
-    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1; Cronet/107.0.5284.2)',
-    context: { osName: 'Android', osVersion: '12', deviceMake: 'Oculus', deviceModel: 'Quest 3', androidSdkVersion: 32 },
-  },
-  {
-    key: 'ANDROID_VR_1.61.48',
-    clientName: 'ANDROID_VR', clientVersion: '1.61.48', clientId: '28',
-    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1; Cronet/132.0.6808.3)',
-    context: { osName: 'Android', osVersion: '12', deviceMake: 'Oculus', deviceModel: 'Quest 3', androidSdkVersion: 32 },
-  },
-  {
-    key: 'TVHTML5_EMBEDDED',
-    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0', clientId: '85',
-    userAgent: 'Mozilla/5.0 (PlayStation; PlayStation 4/12.02) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15',
-    context: {}, embedded: true,
-  },
-];
-const ytmFormatCache = new Map();
-let ytmVisitorData = '';
-let ytmBgutilsPromise = null;
-let ytmWebPoMinterState = null;
-let ytmWebPoMinterPromise = null;
-const ytmPoTokenCache = new Map();
-
-async function getYtmVisitorData() {
-  if (ytmVisitorData) return ytmVisitorData;
-  try {
-    const yt = await getYTMusic();
-    const vd = yt && yt.session && yt.session.context && yt.session.context.client && yt.session.context.client.visitorData;
-    if (vd) ytmVisitorData = vd;
-  } catch (e) {}
-  return ytmVisitorData;
-}
-
-function ytmFormatCacheGet(sid) {
-  const hit = ytmFormatCache.get(sid);
-  if (hit && Date.now() < hit.expiresAt) return hit;
-  if (hit) ytmFormatCache.delete(sid);
-  return null;
-}
-
-function ytmPoTokenCacheGet(sid) {
-  const hit = ytmPoTokenCache.get(sid);
-  if (hit && Date.now() < hit.expiresAt) return hit.token;
-  if (hit) ytmPoTokenCache.delete(sid);
-  return '';
-}
-
-async function loadYtmBgutils() {
-  if (!ytmBgutilsPromise) {
-    ytmBgutilsPromise = Promise.all([
-      import('bgutils-js/botguard'),
-      import('bgutils-js/webpo'),
-      import('bgutils-js/utils'),
-    ]).then(([botguard, webpo, utils]) => ({
-      BotGuardClient: botguard.BotGuardClient,
-      WebPoMinter: webpo.WebPoMinter,
-      buildURL: utils.buildURL,
-      getHeaders: utils.getHeaders,
-      parseLooseJSON: utils.parseLooseJSON,
-      USER_AGENT: utils.USER_AGENT || UA,
-    }));
-  }
-  return ytmBgutilsPromise;
-}
-
-function patchYtmDomForBotGuard(dom) {
-  if (!dom || !dom.window) return;
-  try {
-    const canvasProto = dom.window.HTMLCanvasElement && dom.window.HTMLCanvasElement.prototype;
-    if (canvasProto && !canvasProto.__mineradioPatched) {
-      canvasProto.getContext = function() {
-        return {
-          fillRect() {}, clearRect() {}, getImageData() { return { data: new Uint8ClampedArray(4) }; },
-          putImageData() {}, createImageData() { return []; }, setTransform() {}, drawImage() {},
-          save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
-          stroke() {}, translate() {}, scale() {}, rotate() {}, arc() {}, fill() {},
-          measureText() { return { width: 0 }; }, transform() {}, rect() {}, clip() {},
-          fillText() {}, strokeText() {},
-        };
-      };
-      canvasProto.toDataURL = function() { return 'data:image/png;base64,'; };
-      canvasProto.__mineradioPatched = true;
-    }
-  } catch (e) {}
-}
-
-function installYtmDomGlobals(dom, ytConfig) {
-  if (!dom || !dom.window) return;
-  patchYtmDomForBotGuard(dom);
-  if (ytConfig) {
-    try { dom.window.yt = { config_: JSON.parse(ytConfig) }; } catch (e) {}
-  }
-  globalThis.window = dom.window;
-  globalThis.document = dom.window.document;
-  globalThis.location = dom.window.location;
-  globalThis.origin = dom.window.origin;
-  globalThis.yt = dom.window.yt || globalThis.yt || { config_: {} };
-  try {
-    Object.defineProperty(globalThis, 'navigator', {
-      value: dom.window.navigator,
-      configurable: true,
-      writable: true,
-    });
-  } catch (e) {}
-}
-
-function normalizeYtmAttestationResponse(raw) {
-  if (!raw) return null;
-  const bg = raw.bgChallenge || raw.bg_challenge || raw;
-  const interpreterUrl = bg.interpreterUrl || bg.interpreter_url || {};
-  return {
-    bgChallenge: {
-      interpreterUrl: {
-        privateDoNotAccessOrElseTrustedResourceUrlWrappedValue:
-          interpreterUrl.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue ||
-          interpreterUrl.private_do_not_access_or_else_trusted_resource_url_wrapped_value ||
-          '',
-      },
-      program: bg.program || '',
-      globalName: bg.globalName || bg.global_name || '',
-    },
-  };
-}
-
-function getYtmAttestationUrl(challengeResponse) {
-  const wrapped = challengeResponse &&
-    challengeResponse.bgChallenge &&
-    challengeResponse.bgChallenge.interpreterUrl &&
-    challengeResponse.bgChallenge.interpreterUrl.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
-  if (!wrapped) return '';
-  return wrapped.startsWith('//') ? 'https:' + wrapped : wrapped;
-}
-
-async function createYtmWebPoMinter() {
-  const { BotGuardClient, WebPoMinter, buildURL, getHeaders, parseLooseJSON, USER_AGENT } = await loadYtmBgutils();
-  const dom = new JSDOM('<!DOCTYPE html><html lang="en"><head><title></title></head><body></body></html>', {
-    url: YTM_WEB_URL,
-    referrer: YTM_WEB_URL + '/',
-    userAgent: USER_AGENT,
-  });
-  const pageResp = await fetch(YTM_WEB_URL, {
-    headers: {
-      accept: '*/*',
-      'accept-language': 'en-US,en;q=0.7',
-      'user-agent': USER_AGENT,
-      ...(userCookie ? { cookie: userCookie } : {}),
-    },
-  });
-  if (!pageResp.ok) throw new Error('WEBPO_PAGE_HTTP_' + pageResp.status);
-  const pageHtml = await pageResp.text();
-  const ytConfig = pageHtml.match(/ytcfg\.set\(({.+?})\);/s)?.[1] || '';
-  installYtmDomGlobals(dom, ytConfig);
-
-  const initialAttestationData = pageHtml.match(/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/);
-  let challengeResponse = null;
-  let requestKey = YTM_WEBPO_REQUEST_KEY;
-  if (initialAttestationData) {
-    const parsed = parseLooseJSON(initialAttestationData[1]);
-    challengeResponse = normalizeYtmAttestationResponse(parsed && parsed.R);
-    requestKey = parsed && (parsed.requestKey || parsed.request_key) || requestKey;
-  }
-  if (!challengeResponse || !challengeResponse.bgChallenge || !challengeResponse.bgChallenge.program) {
-    const yt = await getYTMusic(userCookie);
-    const fallbackChallenge = await yt.getAttestationChallenge('ENGAGEMENT_TYPE_UNBOUND');
-    challengeResponse = normalizeYtmAttestationResponse(fallbackChallenge);
-    requestKey = fallbackChallenge && (fallbackChallenge.request_key || fallbackChallenge.requestKey) || requestKey;
-  }
-  if (!challengeResponse || !challengeResponse.bgChallenge || !challengeResponse.bgChallenge.program) {
-    throw new Error('WEBPO_CHALLENGE_UNAVAILABLE');
-  }
-
-  const interpreterUrl = getYtmAttestationUrl(challengeResponse);
-  if (!interpreterUrl) throw new Error('WEBPO_INTERPRETER_URL_MISSING');
-  const scriptResp = await fetch(interpreterUrl, { headers: { 'user-agent': USER_AGENT } });
-  if (!scriptResp.ok) throw new Error('WEBPO_INTERPRETER_HTTP_' + scriptResp.status);
-  const interpreterJavascript = await scriptResp.text();
-  if (!interpreterJavascript) throw new Error('WEBPO_INTERPRETER_EMPTY');
-  new Function(interpreterJavascript)();
-
-  const botGuardClient = await BotGuardClient.create({
-    program: challengeResponse.bgChallenge.program,
-    globalName: challengeResponse.bgChallenge.globalName,
-    globalObject: globalThis,
-  });
-  const webPoSignalOutput = [];
-  const botguardResponse = await botGuardClient.snapshot({ webPoSignalOutput }, 10000);
-  if (!webPoSignalOutput[0]) throw new Error('WEBPO_SIGNAL_UNAVAILABLE');
-
-  const integrityResp = await fetch(buildURL('GenerateIT', true), {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify([requestKey, botguardResponse]),
-  });
-  if (!integrityResp.ok) throw new Error('WEBPO_INTEGRITY_HTTP_' + integrityResp.status);
-  const [integrityToken, estimatedTtlSecs, mintRefreshThreshold, websafeFallbackToken] = await integrityResp.json();
-  const minter = await WebPoMinter.create({
-    integrityToken,
-    estimatedTtlSecs,
-    mintRefreshThreshold,
-    websafeFallbackToken,
-  }, webPoSignalOutput);
-  const ttlMs = Math.max(5 * 60 * 1000, Math.min(Number(estimatedTtlSecs || 0) * 1000, 6 * 60 * 60 * 1000));
-  return { minter, expiresAt: Date.now() + ttlMs };
-}
-
-async function getYtmWebPoMinter(forceRefresh) {
-  if (!forceRefresh && ytmWebPoMinterState && Date.now() < ytmWebPoMinterState.expiresAt - 60 * 1000) {
-    return ytmWebPoMinterState.minter;
-  }
-  if (!ytmWebPoMinterPromise || forceRefresh) {
-    ytmWebPoMinterPromise = createYtmWebPoMinter()
-      .then((state) => {
-        ytmWebPoMinterState = state;
-        return state.minter;
-      })
-      .finally(() => {
-        ytmWebPoMinterPromise = null;
-      });
-  }
-  return ytmWebPoMinterPromise;
-}
-
-async function getYtmContentPoToken(sid, forceRefresh) {
-  if (!forceRefresh) {
-    const cached = ytmPoTokenCacheGet(sid);
-    if (cached) return cached;
-  }
-  try {
-    const minter = await getYtmWebPoMinter(forceRefresh);
-    const token = await minter.mintAsWebsafeString(String(sid || ''));
-    if (!token) throw new Error('WEBPO_TOKEN_EMPTY');
-    const expiresAt = Math.min(
-      ytmWebPoMinterState && ytmWebPoMinterState.expiresAt || (Date.now() + 30 * 60 * 1000),
-      Date.now() + 35 * 60 * 1000,
-    );
-    ytmPoTokenCache.set(sid, { token, expiresAt });
-    if (ytmPoTokenCache.size > 300) ytmPoTokenCache.delete(ytmPoTokenCache.keys().next().value);
-    return token;
-  } catch (e) {
-    if (!forceRefresh) return getYtmContentPoToken(sid, true);
-    throw e;
-  }
-}
-
-function appendYtmPoToken(url, poToken) {
-  if (!poToken) return url;
-  try {
-    const u = new URL(url);
-    u.searchParams.set('pot', poToken);
-    return u.toString();
-  } catch (e) {
-    return url + (url.includes('?') ? '&' : '?') + 'pot=' + encodeURIComponent(poToken);
-  }
-}
-
-function ytmFormatMime(fmt) {
-  return String((fmt && (fmt.mimeType || fmt.mime_type)) || 'audio/webm').split(';')[0].trim() || 'audio/webm';
-}
-
-function ytmFormatContentLength(fmt) {
-  return Number(fmt && (fmt.contentLength || fmt.content_length) || 0) || 0;
-}
-
-function normalizeYtmResolvedFormat(sid, clientKey, fmt, urlOverride) {
-  const directUrl = String(urlOverride || (fmt && fmt.url) || '').trim();
-  if (!directUrl || !/^https?:\/\//i.test(directUrl)) throw new Error('NO_DECIPHERED_AUDIO_URL');
-  return {
-    url: directUrl,
-    mime: ytmFormatMime(fmt),
-    contentLength: ytmFormatContentLength(fmt),
-    bitrate: Number(fmt && fmt.bitrate || 0) || 0,
-    itag: (fmt && fmt.itag) || 0,
-    client: clientKey,
-    sid,
-  };
-}
-
-// 从 streamingData 中挑最优纯音频格式：优先高码率、优先带 url 的（ANDROID_VR 返回明文 url）
-function pickBestAudioFormat(streamingData) {
-  const all = []
-    .concat(streamingData && streamingData.adaptiveFormats || [])
-    .concat(streamingData && streamingData.formats || []);
-  const audio = all.filter(f => f && String(f.mimeType || f.mime_type || '').toLowerCase().startsWith('audio/') && (f.url || f.signatureCipher || f.signature_cipher || f.cipher));
-  if (!audio.length) return null;
-  // 只取带明文 url 的（免解密）；ANDROID_VR 全是明文 url
-  const plain = audio.filter(f => f.url);
-  const pool = plain.length ? plain : audio;
-  // itag 优先级：251/250/249 = opus webm，140/139/141 = m4a；否则按 bitrate
-  const itagRank = { 251: 5, 141: 5, 250: 4, 140: 4, 249: 3, 139: 2 };
-  pool.sort((a, b) => {
-    const ra = itagRank[a.itag] || 0, rb = itagRank[b.itag] || 0;
-    if (rb !== ra) return rb - ra;
-    return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
-  });
-  return pool[0];
-}
-
-async function fetchYtmYoutubeiFormat(sid, clientDef) {
-  if (!userCookie) throw new Error('LOGIN_REQUIRED_COOKIE_MISSING');
-  const poToken = await getYtmContentPoToken(sid);
-  const yt = await Innertube.create({ cookie: userCookie, po_token: poToken });
-  const fmt = await yt.getStreamingData(sid, {
-    client: clientDef.youtubeiClient,
-    type: 'audio',
-    quality: 'best',
-    po_token: poToken,
-  });
-  const resolved = normalizeYtmResolvedFormat(sid, clientDef.key, fmt);
-  resolved.url = appendYtmPoToken(resolved.url, poToken);
-  resolved.poToken = true;
-  return resolved;
-}
-
-async function fetchYtmPlayerFormat(sid, clientDef, visitorData) {
-  if (clientDef.youtubeiClient) return fetchYtmYoutubeiFormat(sid, clientDef);
-  const clientCtx = Object.assign({
-    clientName: clientDef.clientName,
-    clientVersion: clientDef.clientVersion,
-    gl: 'US',
-    hl: 'en',
-  }, clientDef.context || {});
-  if (visitorData) clientCtx.visitorData = visitorData;
-  const body = {
-    context: {
-      client: clientCtx,
-      user: {},
-    },
-    videoId: sid,
-    playlistId: null,
-    contentCheckOk: true,
-    racyCheckOk: true,
-  };
-  if (clientDef.embedded) {
-    body.context.thirdParty = { embedUrl: 'https://www.youtube.com/watch?v=' + sid };
-  }
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-Goog-Api-Format-Version': '1',
-    'X-YouTube-Client-Name': clientDef.clientId,
-    'X-YouTube-Client-Version': clientDef.clientVersion,
-    'X-Origin': 'https://music.youtube.com',
-    'Referer': 'https://music.youtube.com/',
-    'User-Agent': clientDef.userAgent,
-  };
-  if (visitorData) headers['X-Goog-Visitor-Id'] = visitorData;
-  const json = await requestJson(YTM_PLAYER_URL, { method: 'POST', headers }, JSON.stringify(body));
-  const status = json && json.playabilityStatus && json.playabilityStatus.status;
-  if (status && status !== 'OK') {
-    const reason = (json.playabilityStatus.reason || json.playabilityStatus.status || 'UNPLAYABLE');
-    throw new Error('PLAYABILITY_' + status + ': ' + reason);
-  }
-  const fmt = pickBestAudioFormat(json && json.streamingData);
-  if (!fmt || !fmt.url) throw new Error('NO_PLAIN_AUDIO_URL');
-  return normalizeYtmResolvedFormat(sid, clientDef.key, fmt);
-}
-
-async function resolveYtmAudioFormat(sid, forceRefresh) {
-  if (!forceRefresh) {
-    const cached = ytmFormatCacheGet(sid);
-    if (cached) return cached;
-  }
-  const visitorData = await getYtmVisitorData();
-  const failures = [];
-  for (const clientDef of YTM_PLAYER_CLIENTS) {
-    try {
-      const fmt = await fetchYtmPlayerFormat(sid, clientDef, visitorData);
-      const resolved = {
-        sid,
-        client: clientDef.key,
-        url: fmt.url,
-        mime: fmt.mime,
-        contentLength: fmt.contentLength,
-        bitrate: fmt.bitrate,
-        itag: fmt.itag,
-        poToken: !!fmt.poToken,
-        expiresAt: Date.now() + 40 * 60 * 1000,
-        failures: failures.slice(),
-      };
-      ytmFormatCache.set(sid, resolved);
-      if (ytmFormatCache.size > 300) ytmFormatCache.delete(ytmFormatCache.keys().next().value);
-      if (failures.length) console.warn('[YTM Audio] resolved via', clientDef.key, 'after failures:', failures.map(f => f.client + '=' + f.error).join(' | '));
-      return resolved;
-    } catch (e) {
-      failures.push({ client: clientDef.key, error: (e && e.message) || String(e) });
-    }
-  }
-  const err = new Error('YTM_AUDIO_RESOLVE_FAILED: ' + failures.map(f => f.client + '=' + f.error).join(' | '));
-  err.failures = failures;
-  throw err;
-}
-
-// 用给定明文直链把音频代理给客户端，成功发送完毕返回 true。
-// 关键：只要还没调用 res.writeHead（即上游一开始就 4xx，如直链过期 403），失败时抛错，
-// 交给上层换一个新解析的直链重试；一旦开始流式发送就无法重试（res.headersSent 会为真）。
-async function streamYtmDirectFormat(res, fmt, range) {
-  if (range) {
-    // 播放 / 进度条 seek：客户端带 Range，单次透传
-    const up = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: range } });
-    if (up.status >= 400) throw new Error('UPSTREAM_HTTP_' + up.status);
-    const out = {
-      'Content-Type': up.headers.get('content-type') || fmt.mime,
-      'Access-Control-Allow-Origin': '*',
-      'Accept-Ranges': 'bytes',
-      'Cache-Control': 'no-cache',
-    };
-    const cl = up.headers.get('content-length'); if (cl) out['Content-Length'] = cl;
-    const cr = up.headers.get('content-range');  if (cr) out['Content-Range']  = cr;
-    res.writeHead(up.status, out);
-    const reader = up.body.getReader();
-    while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
-    res.end();
-    return true;
-  }
-  // 完整下载（节奏分析等，无 Range）：分块 Range 顺序拉取绕过 Google 限速
-  const CHUNK = 1024 * 1024; // 1MB / 块
-  const total = Number(fmt.contentLength) || 0;
-  let pos = 0;
-  const firstEnd = total ? Math.min(CHUNK - 1, total - 1) : (CHUNK - 1);
-  let r = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-' + firstEnd } });
-  if (r.status >= 400) throw new Error('UPSTREAM_HTTP_' + r.status);
-  const out = {
-    'Content-Type': fmt.mime,
-    'Access-Control-Allow-Origin': '*',
-    'Accept-Ranges': 'bytes',
-    'Cache-Control': 'no-cache',
-  };
-  if (total) out['Content-Length'] = String(total);
-  res.writeHead(200, out);
-  let buf = Buffer.from(await r.arrayBuffer());
-  res.write(buf); pos += buf.length;
-  while (total ? pos < total : buf.length >= CHUNK) {
-    const end = total ? Math.min(pos + CHUNK - 1, total - 1) : (pos + CHUNK - 1);
-    r = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=' + pos + '-' + end } });
-    if (r.status >= 400) break;
-    buf = Buffer.from(await r.arrayBuffer());
-    if (!buf.length) break;
-    res.write(buf); pos += buf.length;
-  }
-  res.end();
-  return true;
-}
-
+// Lyrics resolution and translation live in server/services/lyrics-service.js.
+// ---------- YTM 音频流解析：实现位于 server/services/ytm-audio.js ----------
 // ---------- Wallpaper Engine 壁纸接入（扫描 Steam 创意工坊已下载壁纸） ----------
 const WALLPAPER_ENGINE_APPID = '431960';
 let weItemsCache = { at: 0, items: [], dirs: [] };
@@ -2195,126 +1460,36 @@ async function handleSongUrl(id, loginInfo, qualityPreference) {
 }
 
 // ---------- 业务: 登录态/用户信息 ----------
-let cachedAccountInfo = null;
-let cachedAccountCookie = null;
-let cachedAccountTime = 0;
-
-async function getLoginInfo() {
-  if (!userCookie) return { loggedIn: false, provider: 'youtube', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
-  const obj = parseCookieString(userCookie);
-  const isGoogle = obj.SID || obj.__Secure_3PSID || obj['__Secure-3PSID'] || obj.SAPISID || obj.SSID || userCookie.includes('google') || userCookie.includes('youtube');
-  if (isGoogle || userCookie) {
-    if (cachedAccountCookie === userCookie && cachedAccountInfo && (Date.now() - cachedAccountTime < 15 * 60 * 1000)) {
-      return cachedAccountInfo;
-    }
-    let nickname = 'YouTube Music 会员';
-    let email = '';
-    let handle = '';
-    let avatar = '';
-    try {
-      const yt = await getYTMusic();
-      if (yt && yt.account) {
-        const acc = await yt.account.getInfo();
-        const list = acc.contents && acc.contents.contents ? acc.contents.contents : [];
-        const item = list.find(x => x.type === 'AccountItem' && x.is_selected) || list.find(x => x.type === 'AccountItem') || {};
-        if (item) {
-          nickname = (item.account_name && item.account_name.text) || (item.channel_handle && item.channel_handle.text) || nickname;
-          email = (item.account_byline && item.account_byline.text) || '';
-          handle = (item.channel_handle && item.channel_handle.text) || '';
-          if (item.account_photo && item.account_photo.length) {
-            avatar = item.account_photo[0].url || '';
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[GetLoginInfo Profile]', e.message);
-    }
-    const info = {
-      loggedIn: true,
-      provider: 'youtube',
-      userId: handle || email || (obj.SID ? ('ytm_' + obj.SID.slice(0, 8)) : 'ytm_user'),
-      nickname: nickname,
-      email: email,
-      handle: handle,
-      avatar: avatar,
-      vipType: 0,
-      vipLevel: 'none',
-      isVip: false,
-      isSvip: false,
-      vipLabel: 'YouTube Music',
-      hasCookie: true,
-    };
-    cachedAccountCookie = userCookie;
-    cachedAccountInfo = info;
-    cachedAccountTime = Date.now();
-    return info;
-  }
-  return { loggedIn: false, provider: 'youtube', hasCookie: !!userCookie, vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
+loginService = createLoginService({
+  getCookie: () => userCookie,
+  parseCookieString,
+  getYTMusic,
+  logger: console,
+});
+async function getLoginInfo(options) {
+  return loginService.getInfo(options);
 }
+
+const ytmRouteHandler = createYtmRouteHandler({
+  getLoginInfo,
+  handleSongUrl,
+  getRadioService: function() { ensureYtmServices(); return radioService; },
+  getAudioService: function() { ensureYtmServices(); return ytmAudioService; },
+  sendJSON,
+  userAgent: UA,
+  getUserCookie: () => userCookie,
+  logger: console,
+});
 
 // ====================================================================
 //  HTTP Server
 // ====================================================================
-function radioSongKey(song) {
-  return song && (song.id || ((song.name || '') + '|' + (song.artist || '')));
-}
-function radioNormText(text) {
-  return String(text || '').toLowerCase().replace(/[\s._()[\]{}'"|/\\:-]+/g, '');
-}
-function isPlaceholderRadioText(text) {
-  return /^(unknown|unknownartist|未知|未知歌手|variousartists)$/i.test(radioNormText(text));
-}
-function isValidRadioSong(song) {
-  return !!(song && song.id && song.name && song.artist && song.cover &&
-    !isPlaceholderRadioText(song.name) && !isPlaceholderRadioText(song.artist));
-}
-function radioSeedMatchesSong(song, title, artist) {
-  const seedTitle = radioNormText(title);
-  if (!song || !seedTitle) return false;
-  const songTitle = radioNormText(song.name);
-  if (songTitle !== seedTitle) return false;
-  const seedArtist = radioNormText(artist);
-  const songArtist = radioNormText(song.artist);
-  return !seedArtist || !songArtist || songArtist.includes(seedArtist) || seedArtist.includes(songArtist);
-}
-async function findRadioSeedBySearch(title, artist) {
-  const query = [title, artist].filter(Boolean).join(' ');
-  if (!query) return null;
-  const found = await handleSearch(query, 8);
-  return found.find(song => radioSeedMatchesSong(song, title, artist)) || found[0] || null;
-}
-async function fillRadioWithSearchFallback(songs, seen, seed, title, artist, limit) {
-  const target = Math.max(6, Math.min(Number(limit) || 18, 30));
-  if (songs.length >= target) return songs;
-  const exactQueries = [
-    [title, artist].filter(Boolean).join(' '),
-    artist ? `${artist} songs` : '',
-    title || '',
-  ].filter(Boolean);
-  const artistQueries = [
-    artist ? `${artist} songs` : '',
-    [title, artist].filter(Boolean).join(' '),
-    title || '',
-  ].filter(Boolean);
-  const queries = seed ? exactQueries : artistQueries;
-  for (const query of queries) {
-    if (songs.length >= target) break;
-    const found = await handleSearch(query, target + 6);
-    for (const song of found) {
-      const key = radioSongKey(song);
-      if (!isValidRadioSong(song) || song.id === seed || radioSeedMatchesSong(song, title, artist) || seen.has(key) || seen.has(song.id)) continue;
-      seen.add(song.id);
-      seen.add(key);
-      songs.push(song);
-      if (songs.length >= target) break;
-    }
-  }
-  return songs;
-}
-
+// ---------- 推荐电台：实现位于 server/services/radio-service.js ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost:' + PORT);
   const pn = url.pathname;
+
+  if (await ytmRouteHandler({ req, res, url })) return;
 
   if (pn === '/api/app/version') {
     sendJSON(res, {
@@ -2330,6 +1505,17 @@ const server = http.createServer(async (req, res) => {
         manifestOverride: !!UPDATE_CONFIG.manifest,
       },
     });
+    return;
+  }
+
+  if (pn === '/api/diagnostics/runtime') {
+    sendJSON(res, snapshotRuntimeDiagnostics({
+      version: APP_VERSION,
+      hasCookie: !!userCookie,
+      ytmSession,
+      ytmAudioService,
+      updateJobs: updateDownloadJobs,
+    }));
     return;
   }
 
@@ -2480,47 +1666,6 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       console.error('[WeatherIpLocation]', err);
       sendJSON(res, { ok: false, error: err.message, location: null }, 500);
-    }
-    return;
-  }
-
-  // ---------- 搜索 ----------
-  // ---------- 电台接续：基于某首歌的相关推荐（YTM 自动电台/Up Next） ----------
-  if (pn === '/api/radio') {
-    try {
-      let id = url.searchParams.get('id') || '';
-      const title = url.searchParams.get('title') || '';
-      const artist = url.searchParams.get('artist') || '';
-      const limit = Math.max(6, Math.min(parseInt(url.searchParams.get('limit') || '18', 10) || 18, 30));
-      if (!id && !title && !artist) { sendJSON(res, { songs: [] }); return; }
-      if (!id && title) {
-        const seedMatch = await findRadioSeedBySearch(title, artist);
-        if (seedMatch && seedMatch.id) id = seedMatch.id;
-      }
-      let items = [];
-      if (id) {
-        try {
-          const yt = await getYTMusic();
-          const panel = await yt.music.getUpNext(id, true);
-          items = (panel && panel.contents) || [];
-        } catch (upNextErr) {
-          console.warn('[RadioUpNext]', id, upNextErr.message);
-        }
-      }
-      const seen = new Set(id ? [id] : []);
-      const songs = [];
-      for (const it of items) {
-        const m = mapPanelVideo(it);
-        if (!m || !isValidRadioSong(m) || seen.has(m.id)) continue;
-        seen.add(m.id);
-        songs.push(m);
-      }
-      if (songs.length < Math.min(6, limit)) await fillRadioWithSearchFallback(songs, seen, id, title, artist, limit);
-      console.log('[Radio]', id || '-', title || '-', '/', artist || '-', 'upNext:', items.length, 'songs:', songs.length);
-      sendJSON(res, { seed: id, songs: songs.filter(isValidRadioSong).slice(0, limit) });
-    } catch (err) {
-      console.error('[Radio]', err.message);
-      sendJSON(res, { error: err.message, songs: [] }, 500);
     }
     return;
   }
@@ -2681,25 +1826,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pn === '/api/song/url') {
-    try {
-      const sid = url.searchParams.get('id');
-      const quality = url.searchParams.get('quality') || '';
-      const loginInfo = await getLoginInfo();
-      const info = await handleSongUrl(sid, loginInfo, quality);
-      sendJSON(res, {
-        ...info,
-        loggedIn: loginInfo.loggedIn,
-        vipType: loginInfo.vipType || 0,
-        vipLevel: loginInfo.vipLevel || 'none',
-        isVip: !!loginInfo.isVip,
-        isSvip: !!loginInfo.isSvip,
-        vipLabel: loginInfo.vipLabel || '无VIP',
-      });
-    } catch (err) { console.error('[SongUrl]', err); sendJSON(res, { error: err.message }, 500); }
-    return;
-  }
-
   if (pn === '/api/login/cookie') {
     try {
       const body = await readRequestBody(req);
@@ -2710,7 +1836,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       saveCookie(normalized);
-      const info = await getLoginInfo();
+      const info = await getLoginInfo({ hydrate: false });
       sendJSON(res, { ...info, loggedIn: true, saved: true, hasCookie: true });
     } catch (err) {
       console.error('[LoginCookie]', err);
@@ -2745,7 +1871,13 @@ const server = http.createServer(async (req, res) => {
 
   // ---------- 登录态查询 ----------
   if (pn === '/api/login/status') {
-    const info = await getLoginInfo();
+    const info = await getLoginInfo({ hydrate: false });
+    sendJSON(res, info);
+    return;
+  }
+
+  if (pn === '/api/login/profile') {
+    const info = await getLoginInfo({ hydrate: true });
     sendJSON(res, info);
     return;
   }
@@ -2926,7 +2058,7 @@ const server = http.createServer(async (req, res) => {
       const artist = url.searchParams.get('artist') || '';
       const album = url.searchParams.get('album') || '';
       const durationSec = Number(url.searchParams.get('duration') || 0) || 0;
-      const out = await resolveLyrics({ name, artist, album, durationSec, videoId: id });
+      const out = await lyricsService.resolve({ name, artist, album, durationSec, videoId: id });
       sendJSON(res, { lyric: out.lyric, tlyric: '', yrc: '', source: out.source });
     } catch (err) {
       console.error('[Lyric]', err.message);
@@ -2939,43 +2071,7 @@ const server = http.createServer(async (req, res) => {
   if (pn === '/api/lyric/translate') {
     try {
       const body = req.method === 'POST' ? await readRequestBody(req) : {};
-      const lines = Array.isArray(body.lines) ? body.lines.map(x => String(x == null ? '' : x)) : [];
-      const to = String(body.to || 'zh-CN');
-      const name = String(body.name || '');
-      const artist = String(body.artist || '');
-      const durationSec = Number(body.duration || 0) || 0;
-      if (!lines.length) { sendJSON(res, { translated: [], source: 'empty' }); return; }
-      // 1) 只翻中文且有原词行时：优先网易云人工翻译，但【文字对齐到前端 LrcLib 原词行】，
-      //    时间轴始终用 LrcLib（=按你播放版本时长匹配，和音频对齐），规避版本/翻唱时间轴错位。
-      if (/^zh/i.test(to) && name) {
-        try {
-          const ne = await fetchNeteaseTranslatedLyric({ name, artist, durationSec });
-          if (ne && ne.transLrc) {
-            const map = ne.origLrc ? buildNeteaseTransMap(ne.origLrc, ne.transLrc) : {};
-            const translated = new Array(lines.length).fill('');
-            let matched = 0;
-            for (let i = 0; i < lines.length; i++) {
-              const tr = map[normLyricLine(lines[i])];
-              if (tr) { translated[i] = tr; matched++; }
-            }
-            // 匹配足够多才认为是同一版本歌词；否则退回全机器翻译
-            if (matched >= Math.max(2, Math.floor(lines.length * 0.4))) {
-              const missing = [];
-              for (let i = 0; i < translated.length; i++) if (!translated[i]) missing.push(i);
-              if (missing.length) {
-                const g = await googleTranslateLines(missing.map(i => lines[i]), to);
-                missing.forEach((idx, j) => { translated[idx] = g[j] || ''; });
-              }
-              console.log('[LyricTranslate] 网易云人工翻译命中(对齐 ' + matched + '/' + lines.length + '):', name);
-              sendJSON(res, { translated, source: 'netease-aligned' });
-              return;
-            }
-          }
-        } catch (e) { console.warn('[LyricTranslate netease]', e.message); }
-      }
-      // 2) 机器翻译兜底（逐行，套原词时间轴）
-      const translated = await googleTranslateLines(lines, to);
-      sendJSON(res, { translated, source: 'google' });
+      sendJSON(res, await lyricsService.translate(body));
     } catch (err) {
       console.error('[LyricTranslate]', err.message);
       sendJSON(res, { error: err.message, translated: [] }, 500);
@@ -3083,164 +2179,16 @@ const server = http.createServer(async (req, res) => {
   // ---------- 诊断: 歌词匹配排查（看每首歌卡在哪一步） ----------
   if (pn === '/api/debug/lyric') {
     try {
-      const name = url.searchParams.get('name') || '';
-      const artist = url.searchParams.get('artist') || '';
-      const album = url.searchParams.get('album') || '';
-      const id = url.searchParams.get('id') || '';
-      const durationSec = Number(url.searchParams.get('duration') || 0) || 0;
-      const cleanTrack = cleanLyricTitle(name);
-      const cleanArtist = cleanLyricArtist(artist);
-      const report = {
-        input: { name, artist, album, durationSec, id },
-        cleaned: { track: cleanTrack, artist: cleanArtist },
-        steps: [],
-      };
-      // lrclib get
-      try {
-        const u = new URL(LRCLIB_BASE + '/get');
-        u.searchParams.set('artist_name', cleanArtist);
-        u.searchParams.set('track_name', cleanTrack);
-        if (durationSec > 0) u.searchParams.set('duration', String(durationSec));
-        const body = await requestJson(u.toString(), { headers: LRCLIB_HEADERS });
-        report.steps.push({ step: 'lrclib-get', ok: true, hasSynced: !!(body && body.syncedLyrics), hasPlain: !!(body && body.plainLyrics), matchedArtist: body && body.artistName, matchedTrack: body && body.trackName, matchedDuration: body && body.duration });
-      } catch (e) { report.steps.push({ step: 'lrclib-get', ok: false, error: e.message + (e.statusCode ? ' [HTTP ' + e.statusCode + ']' : '') }); }
-      // lrclib search
-      try {
-        const u = new URL(LRCLIB_BASE + '/search');
-        u.searchParams.set('track_name', cleanTrack);
-        if (cleanArtist) u.searchParams.set('artist_name', cleanArtist);
-        const list = await requestJson(u.toString(), { headers: LRCLIB_HEADERS });
-        report.steps.push({ step: 'lrclib-search', ok: true, count: Array.isArray(list) ? list.length : 0, top: (Array.isArray(list) ? list : []).slice(0, 5).map(x => ({ artist: x.artistName, track: x.trackName, duration: x.duration, synced: !!x.syncedLyrics })) });
-      } catch (e) { report.steps.push({ step: 'lrclib-search', ok: false, error: e.message + (e.statusCode ? ' [HTTP ' + e.statusCode + ']' : '') }); }
-      // 最终结果（走完整瀑布，含 YTM 兜底）
-      const out = await resolveLyrics({ name, artist, album, durationSec, videoId: id });
-      report.result = { source: out.source, hasLyric: !!out.lyric, synced: /\[\d+:\d+/.test(out.lyric || ''), preview: (out.lyric || '').slice(0, 120) };
-      sendJSON(res, report);
+      sendJSON(res, await lyricsService.debug({
+        name: url.searchParams.get('name') || '',
+        artist: url.searchParams.get('artist') || '',
+        album: url.searchParams.get('album') || '',
+        id: url.searchParams.get('id') || '',
+        durationSec: Number(url.searchParams.get('duration') || 0) || 0,
+      }));
     } catch (err) {
       sendJSON(res, { ok: false, error: err.message }, 500);
     }
-    return;
-  }
-
-  if (pn === '/api/debug/audio') {
-    try {
-      const sid = String(url.searchParams.get('id') || '').trim();
-      if (!sid) { sendJSON(res, { ok: false, error: 'Missing id（YouTube videoId）' }, 400); return; }
-      const started = Date.now();
-      try {
-        const fmt = await resolveYtmAudioFormat(sid, true);
-        let upstream = null;
-        try {
-          const probeStart = fmt.contentLength && fmt.contentLength <= 2097152 ? 0 : 2097152;
-          const probeEnd = fmt.contentLength ? Math.min(probeStart + 1023, fmt.contentLength - 1) : (probeStart + 1023);
-          const probeRange = 'bytes=' + probeStart + '-' + probeEnd;
-          const probe = await fetch(fmt.url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: probeRange } });
-          upstream = { status: probe.status, contentType: probe.headers.get('content-type') || '', range: probeRange };
-          try { if (probe.body && probe.body.cancel) await probe.body.cancel(); } catch (e) {}
-        } catch (e) {
-          upstream = { error: (e && e.message) || String(e) };
-        }
-        sendJSON(res, {
-          ok: true,
-          id: sid,
-          client: fmt.client,
-          mime: fmt.mime,
-          bitrate: fmt.bitrate,
-          contentLength: fmt.contentLength,
-          poToken: !!fmt.poToken,
-          clientFailures: fmt.failures,
-          upstream,
-          loggedIn: !!userCookie,
-          ms: Date.now() - started,
-        });
-      } catch (e) {
-        sendJSON(res, { ok: false, id: sid, error: e.message, failures: e.failures || [], loggedIn: !!userCookie, ms: Date.now() - started }, 502);
-      }
-    } catch (err) {
-      sendJSON(res, { ok: false, error: err.message }, 500);
-    }
-    return;
-  }
-
-  // ---------- 音频代理 (YouTube Music 流式 ytm: 为主，其余 URL 通用透传) ----------
-  if (pn === '/api/audio') {
-    try {
-      const audioUrl = url.searchParams.get('url');
-      if (!audioUrl) { res.writeHead(400); res.end('Missing url'); return; }
-      if (audioUrl.startsWith('ytm:')) {
-        const sid = audioUrl.slice(4);
-        const range = req.headers.range || '';
-        console.log('[YTM Audio Proxy] videoId:', sid, range ? ('range=' + range) : 'full');
-        // 第一层：Metrolist 方式解析明文直链，代理转发并透传 Range，支持进度条 seek。
-        // 直链有时效，过期会返回 4xx；只要还没开始发响应（res.headersSent 为假），就换一个
-        // 新解析的直链再试一次，让“临时音源失败”自动无感恢复，实在不行再落第二层 download()。
-        let fmt = null;
-        try {
-          fmt = await resolveYtmAudioFormat(sid);
-        } catch (e) {
-          console.error('[YTM Audio] resolve failed:', e.message);
-        }
-        for (let attempt = 0; fmt && attempt < 2; attempt++) {
-          try {
-            await streamYtmDirectFormat(res, fmt, range);
-            return;
-          } catch (e) {
-            console.warn('[YTM Audio] direct proxy failed (' + fmt.client + '):', e.message);
-            ytmFormatCache.delete(sid);
-            if (res.headersSent) { try { res.end(); } catch (_) {} return; } // 已开始发送，无法重试
-            if (attempt === 0) {
-              try {
-                fmt = await resolveYtmAudioFormat(sid, true);
-                console.warn('[YTM Audio] re-resolved fresh url via', fmt.client, '-> retry');
-                continue;
-              } catch (e2) {
-                console.error('[YTM Audio] re-resolve failed:', e2.message);
-              }
-            }
-            fmt = null; // 落到 download() 兜底
-          }
-        }
-        // 第二层兜底：youtubei.js 内部下载流（不支持 seek），继续使用 WEB_CREATOR + WebPO。
-        try {
-          const poToken = await getYtmContentPoToken(sid, true).catch(() => '');
-          const yt = poToken ? await Innertube.create({ cookie: userCookie || undefined, po_token: poToken }) : await getYTMusic();
-          const stream = await yt.download(sid, { client: 'WEB_CREATOR', type: 'audio', quality: 'best', po_token: poToken || undefined });
-          const nodeStream = Readable.fromWeb(stream);
-          res.writeHead(200, {
-            'Content-Type': (fmt && fmt.mime) || 'audio/webm',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'no-cache',
-          });
-          nodeStream.pipe(res);
-          nodeStream.on('error', (e) => {
-            console.error('[YTM Audio Pipe Error]', e.message);
-            res.end();
-          });
-          return;
-        } catch (e) {
-          console.error('[YTM Audio] all strategies failed:', e.message);
-          res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-          res.end(JSON.stringify({ error: 'YTM_AUDIO_UNAVAILABLE', message: e.message }));
-          return;
-        }
-      }
-      // 其余直链（本地文件、外部 URL）通用透传，支持 Range
-      const range = req.headers.range || '';
-      const upHeaders = { 'User-Agent': UA, Accept: '*/*' };
-      if (range) upHeaders.Range = range;
-      const up = await fetch(audioUrl, { headers: upHeaders });
-      const out = {
-        'Content-Type': up.headers.get('content-type') || 'audio/mpeg',
-        'Access-Control-Allow-Origin': '*',
-        'Accept-Ranges': 'bytes',
-      };
-      const cl = up.headers.get('content-length'); if (cl) out['Content-Length'] = cl;
-      const cr = up.headers.get('content-range');  if (cr) out['Content-Range']  = cr;
-      res.writeHead(up.status, out);
-      const reader = up.body.getReader();
-      while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
-      res.end();
-    } catch (err) { console.error('[Audio]', err); res.writeHead(500); res.end(); }
     return;
   }
 
@@ -3270,6 +2218,29 @@ function startServer() {
   return server;
 }
 
+function releaseServerResources(reason) {
+  const cancelledJobs = cancelUpdateJobs(reason || 'SERVER_SHUTDOWN');
+  if (loginService) loginService.reset();
+  if (ytmAudioService) ytmAudioService.clear();
+  if (ytmSession) ytmSession.clear();
+  ytmAudioService = null;
+  radioService = null;
+  ytmSession = null;
+  return cancelledJobs;
+}
+
+function shutdownServer(callback) {
+  releaseServerResources('SERVER_SHUTDOWN');
+  if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+  if (!server.listening) {
+    if (typeof callback === 'function') queueMicrotask(callback);
+    return server;
+  }
+  return server.close(callback);
+}
+
+server.on('close', () => releaseServerResources('SERVER_CLOSED'));
+
 if (require.main === module) startServer();
 
-module.exports = { server, startServer };
+module.exports = { server, startServer, shutdownServer, releaseServerResources };
