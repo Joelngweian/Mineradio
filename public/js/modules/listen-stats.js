@@ -208,8 +208,11 @@ function createListenStatsController(options) {
       seen[key] = true;
       result.push(song);
     }
-    (Array.isArray(discoverSongs) ? discoverSongs.slice() : []).sort(function(a, b) {
-      return matchArtist(b && b.artist, topArtistNames) - matchArtist(a && a.artist, topArtistNames);
+    // The home feed is a broad editorial pool. It can only supplement listening
+    // history when it directly matches a frequent artist; never fill this row
+    // with unrelated global tracks just because the pool happened to be nonempty.
+    (Array.isArray(discoverSongs) ? discoverSongs.slice() : []).filter(function(song) {
+      return matchArtist(song && song.artist, topArtistNames) > 0;
     }).forEach(push);
     topSongs(10).concat((state.history || []).slice(0, 12)).forEach(function(record) { push(toSong(record)); });
     return result.slice(0, 10);

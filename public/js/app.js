@@ -7,6 +7,7 @@ import * as queueController from './modules/queue-controller.js';
 import * as radioQueue from './modules/radio-queue.js';
 import * as updatePanel from './modules/update-panel.js';
 import * as homeRecommendations from './modules/home-recommendations.js';
+import * as personalizedRadio from './modules/personalized-radio.js';
 import * as homeDiscoverView from './modules/home-discover-view.js';
 import * as playlistDetailView from './modules/playlist-detail-view.js';
 import * as hotkeyState from './modules/hotkey-state.js';
@@ -21,6 +22,7 @@ import * as beatDynamics from './modules/beat-dynamics.js';
 import * as listenStatsModule from './modules/listen-stats.js';
 import * as resourceLifecycle from './modules/resource-lifecycle.js';
 import * as playbackObservabilityModule from './modules/playback-observability.js';
+import * as playbackRecoveryModule from './modules/playback-recovery.js';
 import * as failureDiagnostics from './modules/failure-diagnostics.js';
 
 const MineradioModules = Object.freeze({
@@ -33,6 +35,7 @@ const MineradioModules = Object.freeze({
   radioQueue,
   updatePanel,
   homeRecommendations,
+  personalizedRadio,
   homeDiscoverView,
   playlistDetailView,
   hotkeyState,
@@ -43,6 +46,7 @@ const MineradioModules = Object.freeze({
   listenStats: listenStatsModule,
   resourceLifecycle,
   playbackObservability: playbackObservabilityModule,
+  playbackRecovery: playbackRecoveryModule,
   failureDiagnostics,
 });
 
@@ -80,6 +84,7 @@ var resourceLifecycleManager = MineradioModules.resourceLifecycle.createResource
 var backgroundTaskScope = resourceLifecycleManager.createScope('background');
 var playbackTaskScope = resourceLifecycleManager.createScope('playback');
 var playbackSessionManager = MineradioModules.playbackSession.create();
+var activePlaybackRecovery = null;
 var playbackObservability = MineradioModules.playbackObservability.createPlaybackObservability({
   maxSessions: 8,
   maxEventsPerSession: 72,
@@ -188,6 +193,8 @@ var homeSuppressed = false;
 var homeDiscoverState = { loading: false, loaded: false, loggedIn: false, mode: 'starter', songs: [], playlists: [], podcasts: [], error: '', updatedAt: 0 };
 var homeDiscoverToken = 0;
 var homeRecommendationQueue = [];
+var homePersonalRadioTaskScope = resourceLifecycleManager.createScope('home-personal-radio');
+var homePersonalRadioRefreshScheduled = false;
 var homeVisualPresetActive = false;
 var homeVisualPrevPreset = 0;
 var HOME_LISTEN_STATS_KEY = 'mineradio-listen-stats-v1';
@@ -212,6 +219,16 @@ var listenStatsController = MineradioModules.listenStats.createListenStatsContro
   normalizeArtistName: normalizeArtistNameForMatch,
   artistMatchScore: MineradioModules.homeRecommendations.artistMatchScore,
   onRecorded: function() {
+    refreshHomePersonalRecommendations(true);
+    if (emptyHomeActive) renderHomeDiscover();
+  },
+});
+var homePersonalRadioController = MineradioModules.personalizedRadio.createPersonalizedRadioController({
+  songKey: queueItemKey,
+  artistKey: function(song) { return normalizeArtistNameForMatch(song && song.artist); },
+  isCandidateRelevant: isPersonalRadioCandidate,
+  fetchRadio: fetchPersonalRadioSongs,
+  onStateChange: function() {
     if (emptyHomeActive) renderHomeDiscover();
   },
 });
@@ -12896,8 +12913,75 @@ function listenRecordToSong(record) {
     duration: Number(record.duration) || 0
   };
 }
+function hasEffectiveListenHistory() {
+  var state = listenStatsController.getState();
+  return !!((state.history || []).length || Object.keys(state.songs || {}).length);
+}
+function songScriptFamilies(song) {
+  var text = String((song && song.name || '') + ' ' + (song && song.artist || ''));
+  var families = {};
+  if (/[\u3040-\u30ff]/.test(text)) families.japanese = true;
+  if (/[\u3400-\u9fff\uf900-\ufaff]/.test(text)) families.han = true;
+  if (/[\uac00-\ud7af]/.test(text)) families.korean = true;
+  if (/[\u0400-\u052f]/.test(text)) families.cyrillic = true;
+  if (/[\u0600-\u06ff]/.test(text)) families.arabic = true;
+  if (/[\u0900-\u097f]/.test(text)) families.devanagari = true;
+  if (/[\u0e00-\u0e7f]/.test(text)) families.thai = true;
+  if (/[a-z]/i.test(text)) families.latin = true;
+  return families;
+}
+function preferredListeningScriptFamilies() {
+  var combined = {};
+  topListenSongs(12).forEach(function(song) {
+    Object.assign(combined, songScriptFamilies(song));
+  });
+  return combined;
+}
+function isPersonalRadioCandidate(seed, song) {
+  if (!isUsefulRadioSong(song)) return false;
+  var preferred = preferredListeningScriptFamilies();
+  var candidate = songScriptFamilies(song);
+  var explicitFamilies = ['japanese', 'han', 'korean', 'cyrillic', 'arabic', 'devanagari', 'thai'];
+  var hasExplicitCandidateFamily = explicitFamilies.some(function(name) { return candidate[name]; });
+  if (!hasExplicitCandidateFamily) return true;
+  return explicitFamilies.some(function(name) { return candidate[name] && preferred[name]; });
+}
+async function fetchPersonalRadioSongs(song, signal) {
+  song = song || {};
+  if (!song.id && !song.name) return [];
+  var params = [];
+  if (song.id) params.push('id=' + encodeURIComponent(song.id));
+  params.push('title=' + encodeURIComponent(song.name || ''));
+  params.push('artist=' + encodeURIComponent(song.artist || ''));
+  params.push('limit=10');
+  var data = await apiJson('/api/radio?' + params.join('&'), { signal: signal, timeoutMs: 18000 });
+  return data && Array.isArray(data.songs) ? data.songs : [];
+}
+function refreshHomePersonalRecommendations(force) {
+  var records = topListenSongs(12);
+  if (!records.length) {
+    homePersonalRadioController.reset();
+    return Promise.resolve(homePersonalRadioController.getState());
+  }
+  homePersonalRadioTaskScope = resourceLifecycleManager.createScope('home-personal-radio');
+  var request = homePersonalRadioTaskScope.abortController('home-personal-radio-request');
+  return homePersonalRadioController.load(records, { force: !!force, limit: 10, signal: request.signal }).finally(function() {
+    request.release();
+  });
+}
+function scheduleHomePersonalRecommendations() {
+  if (homePersonalRadioRefreshScheduled || !hasEffectiveListenHistory()) return;
+  homePersonalRadioRefreshScheduled = true;
+  backgroundTaskScope.idle(function() {
+    homePersonalRadioRefreshScheduled = false;
+    refreshHomePersonalRecommendations(false);
+  }, 1200, 'home-personal-radio-refresh');
+}
 function homePersonalRecommendations() {
-  return listenStatsController.recommendations(homeDiscoverState.songs || []);
+  if (!hasEffectiveListenHistory()) return listenStatsController.recommendations(homeDiscoverState.songs || []);
+  var radioState = homePersonalRadioController.getState();
+  if (radioState.songs.length) return radioState.songs;
+  return topListenSongs(10).map(listenRecordToSong).filter(Boolean);
 }
 var homeNowClockTimer = null;
 var HOME_NOW_WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -13173,11 +13257,14 @@ function renderHomeRecommendations() {
   if (!row) return;
   var recommendations = homePersonalRecommendations();
   homeRecommendationQueue = recommendations;
-  var listenStats = listenStatsController.getState();
-  var hasHistory = !!((listenStats.history || []).length || Object.keys(listenStats.songs || {}).length);
+  var hasHistory = hasEffectiveListenHistory();
+  var radioState = homePersonalRadioController.getState();
+  if (hasHistory && !radioState.loading && !radioState.loaded) scheduleHomePersonalRecommendations();
   if (note) {
-    if (recommendations.length) {
-      note.textContent = hasHistory ? '根据最近和常听歌曲整理' : '先用今日推荐垫一组';
+    if (radioState.loading) {
+      note.textContent = '正在根据常听歌曲生成推荐';
+    } else if (recommendations.length) {
+      note.textContent = hasHistory ? (radioState.error ? '关联推荐暂不可用，先显示常听歌曲' : '根据常听歌曲生成') : '先用今日推荐垫一组';
     } else {
       note.textContent = '播放几首歌后按你的口味整理';
     }
@@ -13293,6 +13380,7 @@ async function loadHomeDiscover(force) {
     homeDiscoverState.podcasts = homeDiscoverState.loggedIn ? (data && data.podcasts || []) : [];
     homeDiscoverState.updatedAt = Number(data && data.updatedAt) || Date.now();
     homeDiscoverState.loaded = true;
+    scheduleHomePersonalRecommendations();
   } catch (e) {
     console.warn('home discover failed:', e);
     if (token === homeDiscoverToken) homeDiscoverState.error = 'DISCOVER_FAILED';
@@ -16104,6 +16192,76 @@ function safePlaybackStep(label, fn) {
   }
 }
 
+function isPlaybackRecoveryPhase(phase) {
+  return ['source-url', 'audio-element', 'audio-start', 'audio-play', 'media-error'].indexOf(String(phase || '')) >= 0;
+}
+
+function sourceFailureError(data) {
+  data = data || {};
+  var error = new Error(data.message || data.reason || '音源地址为空');
+  error.code = data.reason || 'SOURCE_URL_MISSING';
+  error.status = Number(data.status || data.statusCode) || 0;
+  return error;
+}
+
+function mediaFailureError(media) {
+  var mediaError = media && media.error || {};
+  var error = new Error(mediaError.message || '音频元素报告错误');
+  error.name = 'MediaError';
+  error.code = Number(mediaError.code) || 'MEDIA_ERR_UNKNOWN';
+  return error;
+}
+
+function schedulePlaybackRecovery(idx, token, opts, phase, error, details) {
+  var state = activePlaybackRecovery;
+  if (!state || state.token !== token || state.index !== idx) return false;
+  if (state.scheduled) return true;
+  var nextAttempt = state.attempt + 1;
+  var retryOptions = Object.assign({}, opts || {}, {
+    preserveHomeState: true,
+    recoveryAttempt: nextAttempt,
+    recoveryOrigin: phase,
+    resumeAt: Math.max(Number(opts && opts.resumeAt) || 0, Number(audio && audio.currentTime) || 0),
+  });
+  if (!MineradioModules.playbackRecovery.shouldRecoverPlaybackFailure({
+    error: error,
+    restricted: !!(details && details.restricted),
+    attempt: state.attempt,
+  })) return false;
+
+  state.scheduled = true;
+  playbackObservability.fail(phase, error, Object.assign({
+    recoverable: true,
+    recoveryAttempt: nextAttempt,
+  }, details || {}), token);
+  playbackObservability.mark('recovery-scheduled', {
+    phase: phase,
+    attempt: nextAttempt,
+    delayMs: MineradioModules.playbackRecovery.recoveryDelayMs(nextAttempt),
+  }, token);
+  showLoading();
+  showToast('音源连接不稳定，正在重新获取…');
+  playbackTaskScope.timeout(function() {
+    if (token !== trackSwitchToken || activePlaybackRecovery !== state) return;
+    state.scheduled = false;
+    playbackObservability.mark('recovery-start', { phase: phase, attempt: nextAttempt }, token);
+    playQueueAt(idx, retryOptions);
+  }, MineradioModules.playbackRecovery.recoveryDelayMs(nextAttempt), 'playback-recovery');
+  return true;
+}
+
+function bindPlaybackRecoveryEvents(media) {
+  if (!media || typeof media.addEventListener !== 'function' || media._mineradioRecoveryBound) return;
+  media._mineradioRecoveryBound = true;
+  media.addEventListener('error', function() {
+    var token = Number(media._mineradioPlaybackToken) || 0;
+    var state = activePlaybackRecovery;
+    if (!token || token !== trackSwitchToken || !state || state.token !== token) return;
+    var error = mediaFailureError(media);
+    schedulePlaybackRecovery(state.index, token, state.options, 'media-error', error, { media: true });
+  });
+}
+
 function playbackFailureToastText(err) {
   if (isPlaybackRecursionError(err)) return '播放准备异常，已保持播放器可操作';
   return '播放失败: ' + (err && err.message ? err.message : err);
@@ -16154,6 +16312,15 @@ async function playQueueAt(idx, opts) {
   closeGsapModal(document.getElementById('local-beat-modal'));
   beatMapToken++;
   var token = trackSwitchToken;
+  var recoveryAttempt = Math.max(0, Number(opts.recoveryAttempt) || 0);
+  activePlaybackRecovery = {
+    token: token,
+    index: idx,
+    attempt: recoveryAttempt,
+    options: Object.assign({}, opts),
+    scheduled: false,
+  };
+  if (recoveryAttempt) markPlayPhase('recovery-attempt', { attempt: recoveryAttempt, origin: opts.recoveryOrigin || '' });
   var firstVisualPlay = !firstPlayDone;
   markPlayPhase('track-setup');
   var song = safePlaybackStep('hydrate-song', function(){ return hydrateCustomCover(playQueue[idx]); }) || playQueue[idx];
@@ -16225,11 +16392,16 @@ async function playQueueAt(idx, opts) {
     var data = await apiJson('/api/song/url?id=' + song.id + qualityParam + (playbackTraceId ? '&ps=' + encodeURIComponent(playbackTraceId) : ''), sourceRequestOptions);
     if (token !== trackSwitchToken) return;
     if (!data.url) {
-      playbackObservability.fail('source-url', new Error(data.message || data.reason || '音源地址为空'), {
+      var unavailableError = sourceFailureError(data);
+      playbackObservability.fail('source-url', unavailableError, {
         reason: data.reason || '',
         restricted: !!data.restriction,
       }, token);
       if (await tryAutoPlaybackFallback(song, data, idx, token, opts)) return;
+      if (schedulePlaybackRecovery(idx, token, opts, 'source-url', unavailableError, {
+        reason: data.reason || '',
+        restricted: !!data.restriction,
+      })) return;
       handlePlaybackUnavailable(song, data);
       return;
     }
@@ -16261,8 +16433,10 @@ async function playQueueAt(idx, opts) {
     }
     bindPlaybackProgressEvents(audio);
     playbackObservability.bindAudio(audio, function(){ return trackSwitchToken; });
+    bindPlaybackRecoveryEvents(audio);
     applyVolumeToAudio();
     var proxyAudioUrl = '/api/audio?url=' + encodeURIComponent(data.url) + (playbackTraceId ? '&ps=' + encodeURIComponent(playbackTraceId) : '');
+    audio._mineradioPlaybackToken = token;
     audio.src = proxyAudioUrl;
     markPlayPhase('audio-src-set', { proxied: true });
     updatePlaybackProgressUi();
@@ -16357,6 +16531,9 @@ async function playQueueAt(idx, opts) {
         else showSourceFallbackNotice('歌曲已载入', '点击播放器中间的播放按钮继续播放。');
         return;
       }
+      if (schedulePlaybackRecovery(idx, token, opts, 'audio-start', lastAudioPlayError || new Error('音源加载失败'), {
+        manual: !!opts.manual,
+      })) return;
       // 音源加载失败：自动尝试队列下一首，避免卡死在坏源上
       if (!opts.manual && token === trackSwitchToken && playQueue.length > 1) {
         skipFailedQueueItem(idx, token, '当前音源加载失败，正在尝试队列里的下一首。');
@@ -16389,9 +16566,10 @@ async function playQueueAt(idx, opts) {
     safePlaybackStep('shelf-preview-suppress-end', suppressShelfPreviewForPlaybackSwitch);
   } catch (err) {
     console.error('Play failed:', { phase: playPhase, error: err }, err);
-    playbackObservability.fail(playPhase, err, { index: idx, songId: song && song.id || '' }, token);
     hideLoading();
     forcePlaybackControlsInteractive();
+    if (isPlaybackRecoveryPhase(playPhase) && schedulePlaybackRecovery(idx, token, opts, playPhase, err, { index: idx, songId: song && song.id || '' })) return;
+    playbackObservability.fail(playPhase, err, { index: idx, songId: song && song.id || '' }, token);
     if (!isPlaybackRecursionError(err) && token === trackSwitchToken && !opts.manual && playQueue.length > 1) {
       skipFailedQueueItem(idx, token, '当前歌曲加载失败，正在尝试队列里的下一首。');
       return;
@@ -16401,9 +16579,10 @@ async function playQueueAt(idx, opts) {
   }
   } catch (setupErr) {
     console.error('Play setup failed:', { phase: playPhase, error: setupErr }, setupErr);
-    playbackObservability.fail(playPhase, setupErr, { index: idx }, typeof token === 'undefined' ? trackSwitchToken : token);
     hideLoading();
     forcePlaybackControlsInteractive();
+    if (typeof token !== 'undefined' && isPlaybackRecoveryPhase(playPhase) && schedulePlaybackRecovery(idx, token, opts, playPhase, setupErr, { index: idx })) return;
+    playbackObservability.fail(playPhase, setupErr, { index: idx }, typeof token === 'undefined' ? trackSwitchToken : token);
     if (!isPlaybackRecursionError(setupErr) && typeof token !== 'undefined' && token === trackSwitchToken && !opts.manual && playQueue.length > 1) {
       skipFailedQueueItem(idx, token, '当前歌曲切换失败，正在尝试队列里的下一首。');
       return;
@@ -16517,6 +16696,14 @@ function getRadioQueueController() {
     getCurrentIndex: function(){ return currentIdx; },
     getQueueLength: function(){ return playQueue.length; },
     applyRecommendations: applyRadioRecommendations,
+    setTimeout: function(callback, delay) {
+      return playbackTaskScope.timeout(callback, delay, 'radio-prime-retry');
+    },
+    onStateChange: function(state) {
+      // Queue reset happens before a new search seed is inserted; rendering that
+      // transient empty state would switch an already open panel away from Queue.
+      if (state && state.status !== 'idle') safeRenderQueuePanel('radio-queue-state');
+    },
     onError: function(error, phase){ console.warn('[Radio] ' + phase + ' failed:', error && error.message || error); }
   });
   return radioQueueController;
@@ -16533,6 +16720,9 @@ async function fetchRadioSongsForSeed(song) {
 }
 async function primeQueueWithSeedRadio(song, attempt) {
   return getRadioQueueController().prime(song, attempt);
+}
+function retryQueueRadioRecommendations() {
+  return getRadioQueueController().retry();
 }
 // 当前歌是队列最后一首且是 YTM 歌时，后台拉「接下来」推荐去重追加，实现无限接续
 async function maybeExtendQueueWithRadio(song) {
@@ -17223,9 +17413,29 @@ function renderQueuePanel(opts) {
     isSongLiked: isSongLiked,
     heartIconSvg: heartIconSvg,
     playlistPlusIconSvg: playlistPlusIconSvg
-  });
+  }) + renderQueueRecommendationStateHtml();
   if (opts.animate && seq === queueRenderSeq) animateVisiblePanelList($ql, '.queue-item', document.getElementById('playlist-panel'), '.queue-item.now');
   renderMiniQueuePanel({ scrollCurrent: miniQueueOpen });
+}
+function renderQueueRecommendationStateHtml() {
+  var state = getRadioQueueController().getState();
+  if (!state || (state.status !== 'loading' && state.status !== 'error')) return '';
+  var seed = state.seed || {};
+  var seedName = String(seed.name || '').trim();
+  var context = seedName ? '根据「' + escHtml(seedName) + '」生成推荐' : '生成推荐队列';
+  if (state.status === 'loading') {
+    var attempt = Number(state.attempt) || 0;
+    var message = attempt > 0 ? '正在重试连接 YouTube Music' : '正在连接 YouTube Music';
+    return '<div class="queue-recommendation-state is-loading" role="status" aria-live="polite">' +
+      '<span class="queue-recommendation-spinner" aria-hidden="true"></span>' +
+      '<div class="queue-recommendation-copy"><div class="queue-recommendation-title">' + context + '</div>' +
+      '<div class="queue-recommendation-sub">' + message + '</div></div></div>';
+  }
+  return '<div class="queue-recommendation-state is-error" role="status">' +
+    '<span class="queue-recommendation-status-dot" aria-hidden="true"></span>' +
+    '<div class="queue-recommendation-copy"><div class="queue-recommendation-title">暂未生成推荐</div>' +
+    '<div class="queue-recommendation-sub">' + context + '</div></div>' +
+    '<button class="queue-recommendation-retry" type="button" data-action="queue-radio-retry">重试</button></div>';
 }
 async function refreshUserPlaylists(force) {
   if (!loginStatus.loggedIn) {
@@ -24640,6 +24850,7 @@ var dynamicActionDelegator = createDynamicActionDelegator({
     'queue-next': function(ctx) { if (ctx.index != null) queueIndexNext(ctx.index); },
     'queue-collect': function(ctx) { if (ctx.index != null) collectQueueIndex(ctx.index); },
     'queue-remove': function(ctx) { if (ctx.index != null) removeFromQueue(ctx.index); },
+    'queue-radio-retry': function() { retryQueueRadioRecommendations(); },
     'song-like': function(ctx) { dispatchLegacySongAction('like', ctx); },
     'song-collect': function(ctx) { dispatchLegacySongAction('collect', ctx); },
     'fx-archive-create': function() { createUserFxArchive(); },

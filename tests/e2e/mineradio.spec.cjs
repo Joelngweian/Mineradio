@@ -41,7 +41,7 @@ function createSilentWav(seconds) {
 
 const E2E_AUDIO = createSilentWav(30);
 
-async function mockLocalApi(page) {
+async function mockLocalApi(page, options = {}) {
   const calls = { radio: 0, radioUrls: [] };
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
@@ -60,7 +60,8 @@ async function mockLocalApi(page) {
     else if (path === '/api/radio') {
       calls.radio += 1;
       calls.radioUrls.push(url);
-      payload = { songs: [RADIO_SONG] };
+      if (options.waitForRadio) await options.waitForRadio;
+      payload = options.radioPayload || { songs: [RADIO_SONG] };
     }
     else if (path === '/api/song/url') payload = { url: 'data:audio/mpeg;base64,SUQz' };
     else if (path === '/api/lyric') payload = {
@@ -76,11 +77,11 @@ async function mockLocalApi(page) {
   return calls;
 }
 
-async function boot(page) {
+async function boot(page, options) {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  const apiCalls = await mockLocalApi(page);
+  const apiCalls = await mockLocalApi(page, options);
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => {
     document.body.classList.remove('splash-active', 'splash-revealing');
@@ -125,6 +126,24 @@ test('search playback uses its first song as the radio recommendation seed', asy
   expect(radioUrl.searchParams.get('id')).toBe(SEARCH_SONG.id);
   expect(radioUrl.searchParams.get('title')).toBe(SEARCH_SONG.name);
   expect(radioUrl.searchParams.get('artist')).toBe(SEARCH_SONG.artist);
+});
+
+test('queue shows recommendation loading state until the YouTube Music radio response arrives', async ({ page }) => {
+  let releaseRadio;
+  const radioGate = new Promise((resolve) => { releaseRadio = resolve; });
+  await boot(page, { waitForRadio: radioGate });
+  await page.evaluate(() => {
+    window.switchPlaylistTab('queue');
+    document.getElementById('playlist-panel').classList.add('show');
+  });
+
+  await searchAndPlay(page);
+  await expect(page.locator('#queue-list .queue-recommendation-state.is-loading')).toBeVisible();
+  await expect(page.locator('#queue-list .queue-recommendation-title')).toContainText('根据「Suzume」生成推荐');
+
+  releaseRadio();
+  await expect(page.locator('#queue-list .queue-item')).toHaveCount(2);
+  await expect(page.locator('#queue-list .queue-recommendation-state')).toHaveCount(0);
 });
 
 test('full lyrics opens as a single scrollable lyric column after playback', async ({ page }) => {

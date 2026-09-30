@@ -14,6 +14,17 @@
 .panel-tab{padding:6px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:rgba(255,255,255,.55);cursor:pointer;font-size:11px;transition:all .2s;font-family:inherit}
 .panel-tab.active{background:rgba(0,245,212,.10);border-color:rgba(0,245,212,.34);color:#eafffb}
 .queue-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.queue-recommendation-state{display:flex;align-items:center;gap:10px;min-height:42px;margin-top:2px;padding:8px 9px;border:1px solid rgba(255,255,255,.09);border-radius:8px;background:rgba(255,255,255,.025);color:rgba(255,255,255,.78)}
+.queue-recommendation-state.is-loading{border-color:rgba(var(--fc-accent-rgb),.20);background:rgba(var(--fc-accent-rgb),.055)}
+.queue-recommendation-state.is-error{border-color:rgba(255,190,100,.20);background:rgba(255,190,100,.045)}
+.queue-recommendation-copy{flex:1;min-width:0}
+.queue-recommendation-title{overflow:hidden;font-size:11.5px;font-weight:650;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}
+.queue-recommendation-sub{margin-top:2px;overflow:hidden;color:rgba(255,255,255,.42);font-size:10px;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}
+.queue-recommendation-spinner{width:13px;height:13px;flex:0 0 auto;border:2px solid rgba(255,255,255,.18);border-top-color:rgba(var(--fc-accent-rgb),.92);border-radius:50%;animation:queue-recommendation-spin .72s linear infinite}
+.queue-recommendation-status-dot{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:#e5aa61;box-shadow:0 0 12px rgba(229,170,97,.45)}
+.queue-recommendation-retry{height:26px;flex:0 0 auto;padding:0 9px;border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.055);color:rgba(255,255,255,.82);cursor:pointer;font:650 10.5px var(--font-sans)}
+.queue-recommendation-retry:hover{border-color:rgba(var(--fc-accent-rgb),.34);background:rgba(var(--fc-accent-rgb),.12);color:#fff}
+@keyframes queue-recommendation-spin{to{transform:rotate(360deg)}}
 .queue-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.04);cursor:pointer;transition:all .2s;will-change:transform,opacity}
 .queue-item:hover{background:rgba(255,255,255,.05)}
 .queue-item.now{border-color:rgba(0,245,212,.34);background:rgba(0,245,212,.075)}

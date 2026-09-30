@@ -50,7 +50,7 @@ test('listen stats records effective sessions and ranks personalized recommendat
     { id: 'other', name: 'Other', artist: 'Elsewhere' },
     { id: 'match', name: 'Matching Song', artist: 'RADWIMPS' },
   ]);
-  assert.deepEqual(recommendations.map((song) => song.id), ['match', 'other', 'first']);
+  assert.deepEqual(recommendations.map((song) => song.id), ['match', 'first']);
 });
 
 test('listen stats ignores short, incomplete playback sessions', async () => {

@@ -3,8 +3,36 @@
     var state = {
       fetching: false,
       seedId: '',
-      primeSerial: 0
+      primeSerial: 0,
+      status: 'idle',
+      seed: null,
+      attempt: 0,
+      retryable: false,
+      lastPrimeError: null,
     };
+
+    function snapshotState() {
+      return {
+        fetching: !!state.fetching,
+        seedId: state.seedId,
+        primeSerial: state.primeSerial,
+        status: state.status,
+        seed: state.seed ? Object.assign({}, state.seed) : null,
+        attempt: state.attempt,
+        retryable: !!state.retryable,
+      };
+    }
+
+    function setPrimeState(status, song, attempt, error) {
+      state = Object.assign({}, state, {
+        status: status,
+        seed: song ? Object.assign({}, song) : null,
+        attempt: Math.max(0, Number(attempt) || 0),
+        retryable: status === 'error',
+        lastPrimeError: error || null,
+      });
+      if (typeof options.onStateChange === 'function') options.onStateChange(snapshotState());
+    }
 
     function enabled() {
       return typeof options.isEnabled !== 'function' || options.isEnabled() !== false;
@@ -42,8 +70,13 @@
 
     function schedulePrimeRetry(song, serial, attempt) {
       attempt = Number(attempt) || 0;
-      if (attempt >= 3 || !song || typeof options.setTimeout !== 'function') return;
+      if (serial !== state.primeSerial || !song) return;
+      if (attempt >= 3 || typeof options.setTimeout !== 'function') {
+        setPrimeState('error', song, attempt, state.lastPrimeError || new Error('RADIO_RECOMMENDATIONS_EMPTY'));
+        return;
+      }
       var delay = [700, 1800, 3600][attempt] || 3600;
+      setPrimeState('loading', song, attempt + 1, null);
       options.setTimeout(function() {
         if (serial !== state.primeSerial) return;
         var findSeed = typeof options.findSeedIndex === 'function' ? options.findSeedIndex : function() { return 0; };
@@ -57,16 +90,23 @@
       attempt = Number(attempt) || 0;
       var serial = ++state.primeSerial;
       var signal = requestSignal();
+      setPrimeState('loading', song, attempt, null);
       try {
         var recommendations = await fetchForSeed(song, signal);
         if (serial !== state.primeSerial || (signal && signal.aborted)) return 0;
         var apply = typeof options.applyRecommendations === 'function' ? options.applyRecommendations : function() { return 0; };
         var added = apply(song, recommendations, { replaceTail: true, requireCurrent: false, reason: 'radio-prime' }) || 0;
-        if (added) state.seedId = song && song.id || state.seedId;
-        else schedulePrimeRetry(song, serial, attempt);
+        if (added) {
+          state = Object.assign({}, state, { seedId: song && song.id || state.seedId });
+          setPrimeState('ready', song, attempt, null);
+        } else {
+          state = Object.assign({}, state, { lastPrimeError: new Error('RADIO_RECOMMENDATIONS_EMPTY') });
+          schedulePrimeRetry(song, serial, attempt);
+        }
         return added;
       } catch (error) {
         if (serial === state.primeSerial && !(signal && signal.aborted) && !(error && error.isAbort)) {
+          state = Object.assign({}, state, { lastPrimeError: error });
           schedulePrimeRetry(song, serial, attempt);
           if (typeof options.onError === 'function') options.onError(error, 'prime');
         }
@@ -99,9 +139,13 @@
     }
 
     function reset() {
-      state.fetching = false;
-      state.seedId = '';
-      state.primeSerial += 1;
+      state = Object.assign({}, state, { fetching: false, seedId: '', primeSerial: state.primeSerial + 1 });
+      setPrimeState('idle', null, 0, null);
+    }
+
+    function retry() {
+      if (state.status === 'loading' || !state.seed) return Promise.resolve(0);
+      return prime(Object.assign({}, state.seed), 0);
     }
 
     return {
@@ -109,13 +153,8 @@
       prime: prime,
       extend: extend,
       reset: reset,
-      getState: function() {
-        return {
-          fetching: state.fetching,
-          seedId: state.seedId,
-          primeSerial: state.primeSerial
-        };
-      }
+      retry: retry,
+      getState: snapshotState,
     };
   }
 
